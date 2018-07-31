@@ -1,0 +1,14 @@
+{% extends 'layout.html' %}
+
+{% block body %}
+  <div class="jumbotron text-center">
+    <h1>Welcome to the <br> RDS Slow Query Log Examiner</h1>
+    <p class="lead">This application is built on the Python Flask framework</p>
+  </div>
+
+{% if redirect %}
+<meta http-equiv="refresh" content="1; url={{redirect}}" />
+{% endif %}
+
+{% endblock %}
+

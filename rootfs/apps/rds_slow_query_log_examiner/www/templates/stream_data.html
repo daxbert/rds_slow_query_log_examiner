@@ -1,0 +1,122 @@
+{% extends 'layout.html' %}
+
+{% block body %}
+{% include 'includes/_stream_navbar.html' %}
+<form method="get">
+<div class="container">
+    <div class="row">
+    <div class='col-sm-4'>
+        <div class="form-group">
+           <div class="input-group date" id="datetimepicker1" data-target-input="nearest">
+                <span class="align-middle">Start Time:&nbsp;&nbsp;&nbsp; </span>
+                <input id="startDateString" name="startDateString" type="text" class="form-control datetimepicker-input" data-target="#datetimepicker1"/>
+                <div class="input-group-append" data-target="#datetimepicker1" data-toggle="datetimepicker">
+                    <div class="input-group-text"><i class="fa fa-calendar"></i></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class='col-sm-4'>
+        <div class="form-group">
+           <div class="input-group date" id="datetimepicker2" data-target-input="nearest">
+                <span class="align-middle">End Time:&nbsp;&nbsp;&nbsp;</span>
+                <input name="endDateString" id="endDateString" type="text" class="form-control datetimepicker-input" data-target="#datetimepicker2"/>
+                <div class="input-group-append" data-target="#datetimepicker2" data-toggle="datetimepicker">
+                    <div class="input-group-text"><i class="fa fa-calendar"></i></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class='col-sm-4'>
+        <button type="submit" class="btn btn-primary">Submit</button>
+    </div>
+    </div>
+</div>
+</form>
+<table hidden id="datatable" class="table">
+<thead>
+    <tr>
+     <th id=count scope="col">Count</th>
+     <th scope="col">Rows Examined</th>
+     <th scope="col">Rows Sent</th>
+     <th scope="col">Query Time</th>
+     <th scope="col">Lock Time</th>
+     <th scope="col">Query</th>
+    </tr>
+</thead>
+<tbody>
+{% for entry in logEntries.items()|sort(reverse=True,attribute='1.totalqtime') %}
+<tr>
+    <td>{{entry.1.totalcount}}</td>
+    <td>{{entry.1.totalrows}}</td>
+    <td>{{entry.1.totalsent}}</td>
+    <td>{{entry.1.totalqtime}}</td>
+    <td>{{entry.1.totalltime}}</td>
+    <td>{{entry.0}}</td>
+<!-- 
+<pre>
+{{entry.1.queries.0}}
+{{entry.1.queries.1}}
+{{entry.1.queries.2}}
+{{entry.1.queries.3}}
+</pre>
+-->
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% endblock %}
+{% block footer %}
+<script type="text/javascript">
+$(document).ready(function() {
+    $('#datatable').DataTable( {
+        "deferRender": true,
+        "order": [[ 0, "desc" ]],
+        "aoColumns": [
+            { 
+                "orderSequence": [ "desc", "asc" ], 
+                render: $.fn.dataTable.render.number(',','.')
+            },
+            { 
+                "orderSequence": [ "desc", "asc" ] ,
+                render: $.fn.dataTable.render.number(',','.') 
+            },
+            { 
+                "orderSequence": [ "desc", "asc" ] ,
+              render: $.fn.dataTable.render.number(',','.') 
+            },
+            { 
+                "orderSequence": [ "desc", "asc" ] ,
+              render: $.fn.dataTable.render.number(',','.',4) 
+            },
+            { 
+                "orderSequence": [ "desc", "asc" ] ,
+              render: $.fn.dataTable.render.number(',','.',4) 
+            },
+            null
+        ],
+    } );
+    $(function () {
+        $('#datetimepicker1').datetimepicker( {
+            defaultDate: {{start_timestamp}},
+            format: "YYYY/MM/DD HH:mm:ss",
+            sideBySide: true
+
+        });
+        $('#datetimepicker2').datetimepicker({
+            defaultDate: {{end_timestamp}},
+            format: "YYYY/MM/DD HH:mm:ss",
+            sideBySide: true,
+            useCurrent: false
+        });
+        $("#datetimepicker1").on("change.datetimepicker", function (e) {
+            $('#datetimepicker2').datetimepicker('minDate', e.date);
+        });
+        $("#datetimepicker2").on("change.datetimepicker", function (e) {
+            $('#datetimepicker1').datetimepicker('maxDate', e.date);
+        });
+    });
+} );
+document.getElementsByClassName("table")[0].removeAttribute('hidden');
+</script>
+{% endblock %}

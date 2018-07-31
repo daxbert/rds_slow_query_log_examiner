@@ -1,0 +1,13 @@
+{% extends 'layout.html' %}
+
+{% block body %}
+<h1>List of AWS Regions</h1>
+<ul class="list-group">
+{% for region in response.Regions %}
+<li class="list-group-item">
+  <a href="/{{region.RegionName}}/streams/">{{region.RegionName}}</a>
+</li>
+{% endfor %}
+<ul>
+{% endblock %}
+

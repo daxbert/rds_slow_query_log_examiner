@@ -1,0 +1,21 @@
+{% extends 'layout.html' %}
+
+{% block body %}
+<h1>List of Streams</h1>
+<ul class="list-group">
+{% for stream in streamList %}
+  {% if stream.storedBytes %}
+<li class="list-group-item">
+  <a href="/{{region}}/stream/details/{{stream.arn | urlencode }}/">{{stream.logStreamName}}</a>
+  <br>
+  </li>
+{% else %}
+<li class="list-group-item">
+  <a href="/{{region}}/stream/details/{{stream.arn | urlencode }}/">{{stream.logStreamName}}</a> (EMPTY)
+  <br>
+ </li>
+{% endif %}
+{% endfor %}
+<ul>
+{% endblock %}
+

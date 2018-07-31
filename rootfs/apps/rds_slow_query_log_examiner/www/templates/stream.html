@@ -1,0 +1,12 @@
+{% extends 'layout.html' %}
+
+{% block body %}
+{% include 'includes/_stream_navbar.html' %}
+<ul class="list-group">
+{% for k in stream %}
+  <li class="list-group-item">
+  {{k}}: {{stream[k]}}
+  </li>
+{% endfor %}
+</ul>
+{% endblock %}
