@@ -69,8 +69,8 @@ regexDates = [
     re.compile(r"'\d{4}-\d{2}-\d{2}'"),
     re.compile(r"'\d{4}-\d{2}-\d{2}.\d{2}:\d{2}:\d{2}\.\d{1,}'"),
     re.compile(r"'\d{4}-\d{2}-\d{2}.\d{2}:\d{2}:\d{2}'"),
-    re.compile( r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}-\d{2}:\d{2}"),
-    re.compile( r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"),
+    re.compile(r"'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}-\d{2}:\d{2}'"),
+    re.compile(r"'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}'"),
 ]
 
 regexComments = [
@@ -78,11 +78,15 @@ regexComments = [
 ]
 
 regexString = [
-    re.compile(r"'.*?'"),
+    re.compile(r"'.*?'")
 ]
 
 regexHibernate = [
     re.compile(r"\d+_")
+]
+
+regexValues = [
+    re.compile(r"VALUES\s*(.*)")
 ]
 
 regexNumbers = [
@@ -95,15 +99,21 @@ regexNumbers = [
 def filterNumbers(sql):
     filteredSql = ""
     for line in sql.splitlines():
-        # look for UUID like things, and replace with {UUID}
+
+        # Replace Values expression with {VALUES_LIST}
+        for regex in regexValues:
+             line = regex.sub("VALUES ( {VALUES_LIST} )",line)
+
+        # remove comments
         for regex in regexComments:
             line = regex.sub("",line)
 
+        # look for UUID like things, and replace with {UUID}
         for regex in regexUUIDs:
             line = regex.sub("{UUID}",line)
 
         for regex in regexDates:
-            line = regex.sub("{DATE}",line)
+            line = regex.sub("'{DATE}'",line)
 
         # look for hibernate names
         for regex in regexHibernate:
@@ -114,7 +124,7 @@ def filterNumbers(sql):
             line = regex.sub("####",line)
 
         for regex in regexString:
-            line = regex.sub("{STRING}",line)
+            line = regex.sub("'{STRING}'",line)
 
         filteredSql = filteredSql + line + "\n"
     return filteredSql
@@ -216,7 +226,7 @@ def stream_page(option, arn, region):
             return render_template('stream.html', stream = stream, ui = ui, os = os )
 
         if 'lastEventTimestamp' in stream:
-            start_timestamp = stream['lastEventTimestamp'] - ( 1000 * 60 * 60 )
+            start_timestamp = stream['lastEventTimestamp'] - ( 1000 * 60 * 5 )
             end_timestamp = stream['lastEventTimestamp']
             if ( startDateTimestamp ):
                 logger.info("startDateTimestamp specified: {}".format(startDateTimestamp))
