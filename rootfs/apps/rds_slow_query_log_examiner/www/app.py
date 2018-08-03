@@ -1,6 +1,7 @@
 from __future__ import unicode_literals
 from flask import Flask, request, redirect, jsonify, abort, render_template,  g
 # from werkzeug.exceptions import NotFound
+import botocore
 import time
 import logging
 import datetime
@@ -50,8 +51,21 @@ def regions():
     """
     client = boto3.client('ec2')
 
-    response = client.describe_regions()
-    return render_template('regions.html', response=response)
+    try:
+        response = client.describe_regions()
+        return render_template('regions.html', response=response)
+
+    except botocore.exceptions.NoCredentialsError as e:
+        return render_template('error.html', code = 500, name = "No AWS Credentials Provided.  You need to set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY on the docker command line", description = e)
+
+    except botocore.exceptions.BotoCoreError as e:
+        return render_template('error.html', code = 500, name = "API Error", description = e)
+
+    except Error as e:
+        logger.info("Exception by boto")
+        return render_template('error.html', code = 500, name = "Python Exception", description = e)
+
+    return None
 
 @app.route('/', methods=['GET'])
 def home_page():
@@ -406,6 +420,9 @@ def describeLogStreams(logGroupNameValue):
             logStreams[elem['arn']] = elem
     logger.info('LogStreams Found: {}'.format(len(logStreams)))
     return logStreams
+
+
+
 def describeLogGroups():
     client = boto3.client('logs')
     logGroups = []

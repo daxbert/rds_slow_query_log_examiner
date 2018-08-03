@@ -1,0 +1,10 @@
+{% extends 'layout.html' %}
+
+{% block body %}Error {{ code }}: {{ name }}<br>
+  {{ description}}
+<br>
+<br>
+<hr>
+<h3>Page will refresh in 10 seconds</h3>
+<meta http-equiv="refresh" content="10; url=/">
+{% endblock %}
