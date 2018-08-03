@@ -220,16 +220,23 @@ def stream_page(option, arn, region):
     end_timestamp = 0
     startDateTimestamp = 0
     endDateTimestamp = 0
+    dateFormatString = "%Y/%m/%d %H:%M:%S"
+
     if "startDateString" in request.args:
         startDateString = request.args["startDateString"]
-        startDateTimestamp = int(datetime.datetime.strptime(startDateString, "%Y/%m/%d %H:%M:%S").timestamp() * 1000)
+        try:
+            startDateTimestamp = int(datetime.datetime.strptime(startDateString, dateFormatString).timestamp() * 1000)
+        except ValueError:
+            logger.info("Invalid startDateString '{}' expected '{}'".format(startDateString, dateFormatString))
     else:
         logger.info("startDateString NOT IN URL")
-        logger.info("{}".format(pprint.pformat(request.args)))
 
     if "endDateString" in request.args:
         endDateString = request.args["endDateString"]
-        endDateTimestamp = int(datetime.datetime.strptime(endDateString, "%Y/%m/%d %H:%M:%S").timestamp() * 1000)
+        try:
+            endDateTimestamp = int(datetime.datetime.strptime(endDateString, dateFormatString).timestamp() * 1000)
+        except ValueError:
+            logger.info("Invalid endDateString '{}' expected '{}'".format(endDateString,dateFormatString))
     else:
         logger.info("endDateString NOT IN URL")
 
@@ -248,14 +255,14 @@ def stream_page(option, arn, region):
                     start_timestamp = stream['firstEventTimestamp']
                 else:
                     start_timestamp = startDateTimestamp
-                logger.info("start_timestamp: {}".format(start_timestamp))
+            logger.info("start_timestamp: {}".format(start_timestamp))
             if ( endDateTimestamp ):
                 logger.info("endDateTimestamp specified: {}".format(endDateTimestamp))
                 if ( endDateTimestamp > stream['lastEventTimestamp'] ):
                     end_timestamp = stream['lastEventTimestamp']
                 else:
                     end_timestamp = endDateTimestamp
-                logger.info("end_timestamp: {}".format(end_timestamp))
+            logger.info("end_timestamp: {}".format(end_timestamp))
 
         if ( option == "refresh" ):
             g.logStreamsCache.close()
