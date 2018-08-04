@@ -121,6 +121,12 @@ Runs the container in DEV MODE. ( see DEV MODE below )
 
 Runs the container normally. 
 
+#### ```docker_setup.ps1```
+
+If you're on Windows, run this to get the docker-machine running
+and get your environment variables set properly for the 
+other docker commands.
+
 ## Config scripts
 
 #### ```config``` | ```config.ps1```
