@@ -98,15 +98,18 @@ Optionally, you can run from Docker Hub as shown above.
 
 ## HELPER SCRIPTS
 
-#### ```build.sh```
+* The .sh files should work on Linux/Mac 
+* The .ps1 files should work for Windows Powershell
 
-Calls clean.sh and then builds the container image
+#### ```build.sh``` / ```build.ps1```
 
-#### ```clean.sh```
+Calls clean and then builds the container image
+
+#### ```clean.sh``` / ```clean.ps1```
 
 Purges files to keep them from appearing in the container image
 
-#### ```deploy.sh```
+#### ```deploy.sh``` / ```deploy.ps1```
 
 Deploys the current docker image to Docker Hub
 
@@ -114,13 +117,13 @@ Deploys the current docker image to Docker Hub
 
 Runs the container in DEV MODE. ( see DEV MODE below )
 
-#### ```run.sh```
+#### ```run.sh``` / ```run.ps1```
 
 Runs the container normally. 
 
 ## Config scripts
 
-#### ```config```
+#### ```config``` | ```config.ps1```
 
 Meant to be sourced by the various helper scripts.  This checks that 
 ``` docker info ``` works and sets the docker repo name
