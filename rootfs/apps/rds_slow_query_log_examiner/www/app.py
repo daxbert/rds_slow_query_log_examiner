@@ -1,6 +1,7 @@
 from __future__ import unicode_literals
 from flask import Flask, request, redirect, jsonify, abort, render_template,  g
 # from werkzeug.exceptions import NotFound
+from sql import SQL
 import botocore
 import time
 import logging
@@ -73,75 +74,6 @@ def home_page():
     Show homepage
     """
     return render_template('index.html', redirect="/regions")
-
-regexUUIDs = [ 
-    re.compile(r"[0-9a-f]{32}"),
-    re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
-]
-
-regexDates = [ 
-    re.compile(r"'\d{4}-\d{2}-\d{2}'"),
-    re.compile(r"'\d{4}-\d{2}-\d{2}.\d{2}:\d{2}:\d{2}\.\d{1,}'"),
-    re.compile(r"'\d{4}-\d{2}-\d{2}.\d{2}:\d{2}:\d{2}'"),
-    re.compile(r"'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}-\d{2}:\d{2}'"),
-    re.compile(r"'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}'"),
-]
-
-regexComments = [
-    re.compile(r"/\*.*?\*/")
-]
-
-regexString = [
-    re.compile(r"'.*?'")
-]
-
-regexHibernate = [
-    re.compile(r"\d+_")
-]
-
-regexValues = [
-    re.compile(r"VALUES\s*(.*)")
-]
-
-regexNumbers = [
-    re.compile(r"\d{4,}"),
-    re.compile(r"[-\.\d]{4,}"),
-    re.compile(r"####\s*,\s*####\s*,\s*####,[\s,#]*,\s*####")
-]
-# re.compile(r"d{4,}"),
-    
-def filterNumbers(sql):
-    filteredSql = ""
-    for line in sql.splitlines():
-
-        # Replace Values expression with {VALUES_LIST}
-        for regex in regexValues:
-             line = regex.sub("VALUES ( {VALUES_LIST} )",line)
-
-        # remove comments
-        for regex in regexComments:
-            line = regex.sub("",line)
-
-        # look for UUID like things, and replace with {UUID}
-        for regex in regexUUIDs:
-            line = regex.sub("{UUID}",line)
-
-        for regex in regexDates:
-            line = regex.sub("'{DATE}'",line)
-
-        # look for hibernate names
-        for regex in regexHibernate:
-            line = regex.sub("#_",line)
-
-        # look for consecutive digits >= 4 and replace with ####
-        for regex in regexNumbers:
-            line = regex.sub("####",line)
-
-        for regex in regexString:
-            line = regex.sub("'{STRING}'",line)
-
-        filteredSql = filteredSql + line + "\n"
-    return filteredSql
 
 """
 regex patterns used in the parseLogEntry function
@@ -377,11 +309,12 @@ def getLogEntries(logGroup, logStreamName, startTime, endTime):
             oldestTimestamp = ts
         logger.info("TS: {} is {}".format(ts,datetime.datetime.fromtimestamp(ts/1000.0)))
         for event in response['events']:
-           le = parseLogEntry(event)
-           if le is None:
+            le = parseLogEntry(event)
+            if le is None:
                return None
-           le['hash'] = filterNumbers(le['query'])
-           logEntries = updateLogEntries(logEntries, le)
+            tempquery = SQL(le['query'])
+            le['hash'] = tempquery.fingerprint()
+            logEntries = updateLogEntries(logEntries, le)
     while (budgetLeft > 0 and len(response['events']) > 0):
         response = client.get_log_events(logGroupName = logGroup,logStreamName = logStreamName, startTime = startTime, endTime = endTime, startFromHead=False, nextToken=response['nextBackwardToken'])
         logger.info("LE2: {}".format(len(response['events'])))
@@ -404,7 +337,8 @@ def getLogEntries(logGroup, logStreamName, startTime, endTime):
                 le = parseLogEntry(event)
                 if le is None:
                     return None
-                le['hash'] = filterNumbers(le['query'])
+                tempquery = SQL(le['query'])
+                le['hash'] = tempquery.fingerprint()
                 logEntries = updateLogEntries(logEntries, le)
     logger.info('TOTAL Deduped SQL Found: {}'.format(len(logEntries)))
     key = logStreamName + "_" + str(oldestTimestamp) + "_" + str(newestTimestamp)
