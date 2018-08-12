@@ -136,7 +136,7 @@ def parseLogEntry(cw_event):
         logger.info("PARSE_FAILED: {} {} {} {} {}".format(rows,qtime,ltime,user,host))
         return None
     else:
-        return { 'qtime': qtime, 'session': session, 'rows': rows, 'sent': sent, 'ltime': ltime, 'query': query, 'raw': cw_event['message'], 'timestamp': cw_event['timestamp'] }
+        return { 'event': cw_event, 'qtime': qtime, 'session': session, 'rows': rows, 'sent': sent, 'ltime': ltime, 'query': query, 'raw': cw_event['message'], 'timestamp': cw_event['timestamp'] }
 
 @app.route('/<region>/stream/<option>/<path:arn>/', methods=['GET'])
 def stream_page(option, arn, region):
@@ -207,10 +207,12 @@ def stream_page(option, arn, region):
         if ( option == "data" ):
             ui['count'] = spanActive
             if 'lastEventTimestamp' in stream:
-                ( logEntries, oldestTimestamp, newestTimestamp ) = getLogEntries(stream['logGroup'], stream['logStreamName'], start_timestamp, end_timestamp)
-            logger.info("oldestTimestamp: {} {}".format(oldestTimestamp, datetime.datetime.fromtimestamp(oldestTimestamp/1000.0))) 
-            logger.info("newestTimestamp: {} {}".format(newestTimestamp, datetime.datetime.fromtimestamp(newestTimestamp/1000.0)))
-            return render_template('stream_data.html', stream = stream, ui = ui, logEntries = logEntries, os = os, start_timestamp = oldestTimestamp, end_timestamp = newestTimestamp )
+                logEntries = getLogEntries(stream['logGroup'], stream['logStreamName'], start_timestamp, end_timestamp)
+                oldestTimestamp=logEntries['METRICS']['FIRST_TS']
+                newestTimestamp=logEntries['METRICS']['LAST_TS']
+                logger.info("oldestTimestamp: {} {}".format(oldestTimestamp, datetime.datetime.fromtimestamp(oldestTimestamp/1000.0)))
+                logger.info("newestTimestamp: {} {}".format(newestTimestamp, datetime.datetime.fromtimestamp(newestTimestamp/1000.0)))
+            return render_template('stream_data.html', stream = stream, ui = ui, logEntries = logEntries['QUERIES'], os = os, start_timestamp = oldestTimestamp, end_timestamp = newestTimestamp )
 
     logger.info("arn: {} NOT FOUND, returning 404".format(arn))
     abort(404)
@@ -251,27 +253,6 @@ def getSlowQueryStreams():
     g.logStreamsCache[os.environ['AWS_DEFAULT_REGION']]['logStreams'] = allLogStreams
     return g.logStreamsCache[os.environ['AWS_DEFAULT_REGION']]['logStreams']
 
-def updateLogEntries(logEntries,le):
-    if le['hash'] in logEntries:
-       if ( len(logEntries[le['hash']]['queries']) < MAX_QUERIES ):
-           logEntries[le['hash']]['queries'].append(le)
-           logger.debug("LEN: {}".format(len(logEntries[le['hash']]['queries'])))
-       logEntries[le['hash']]['totalcount'] = logEntries[le['hash']]['totalcount'] + 1 
-       logEntries[le['hash']]['totalrows'] = logEntries[le['hash']]['totalrows'] + int(le['rows'])
-       logEntries[le['hash']]['totalsent'] = logEntries[le['hash']]['totalsent'] + int(le['sent'])
-       logEntries[le['hash']]['totalqtime'] = logEntries[le['hash']]['totalqtime'] + float(le['qtime']) 
-       logEntries[le['hash']]['totalltime'] = logEntries[le['hash']]['totalltime'] + float(le['ltime']) 
-    else:
-       logEntries[le['hash']] = { 
-                                   'queries': [ le ],
-                                   'totalcount' : 1,
-                                   'totalsent' : int(le['sent']), 
-                                   'totalrows' : int(le['rows']), 
-                                   'totalqtime' : float(le['qtime']),
-                                   'totalltime' : float(le['ltime']) 
-                                }
-    return logEntries
-
 def clearCacheStreamEntries(logGroup, logStreamName, startTime, endTime):
     if logStreamName in g.logEntriesCache:
         del g.logEntriesCache[logStreamName]
@@ -279,6 +260,65 @@ def clearCacheStreamEntries(logGroup, logStreamName, startTime, endTime):
 def clearCacheLogEntries(logGroup, logStreamName, startTime, endTime):
     if logStreamName in g.logEntriesCache:
         del g.logEntriesCache[logStreamName]
+
+def updateLogEntries(logEntries,le):
+    if not 'QUERIES' in logEntries:
+        logEntries['QUERIES'] = {}
+        logEntries['METRICS'] = {}
+
+    if le['hash'] in logEntries['QUERIES']:
+        leqh = logEntries['QUERIES'][le['hash']]
+        if ( len(leqh['queries']) < MAX_QUERIES ):
+            leqh['queries'].append(le)
+            logger.debug("LEN: {}".format(len(leqh['queries'])))
+        leqh['totalcount']  += 1
+        leqh['totalrows']   += int(le['rows'])
+        leqh['totalsent']   += int(le['sent'])
+        leqh['totalqtime']  += float(le['qtime'])
+        leqh['totalltime']  += float(le['ltime'])
+    else:
+        logEntries['QUERIES'][le['hash']] = {
+                                   'queries': [ le ],
+                                   'totalcount' : 1,
+                                   'totalsent' : int(le['sent']),
+                                   'totalrows' : int(le['rows']),
+                                   'totalqtime' : float(le['qtime']),
+                                   'totalltime' : float(le['ltime'])
+        }
+
+    if 'TOTAL_QUERY_COUNT' in logEntries['METRICS']:
+        logEntries['METRICS']['TOTAL_QUERY_COUNT'] += 1
+        ts = le['event']['timestamp']
+        if ( ts < logEntries['METRICS']['FIRST_TS']):
+            logEntries['METRICS']['FIRST_TS'] = ts
+        if (ts > logEntries['METRICS']['LAST_TS']):
+            logEntries['METRICS']['LAST_TS'] = ts
+    else:
+        logEntries['METRICS']['TOTAL_QUERY_COUNT'] = 1
+        logEntries['METRICS']['FIRST_TS'] = le['event']['timestamp']
+        logEntries['METRICS']['LAST_TS'] = le['event']['timestamp']
+
+    return logEntries
+
+def processCloudWatchResponse(response, logEntries):
+    logger.info("Event Count: {}".format(len(response['events'])))
+    if ( len(response['events']) > 0 ):
+        first_ts = response['events'][0]['timestamp']
+        last_ts = response['events'][len(response['events']) - 1]['timestamp']
+        if last_ts < first_ts:
+            first_ts,last_ts = last_ts,first_ts
+        logger.info("From: {} to {}".format(datetime.datetime.fromtimestamp(first_ts/1000.0),
+                                            datetime.datetime.fromtimestamp(last_ts / 1000.0)))
+        for event in response['events']:
+            le = parseLogEntry(event)
+            if le is None:
+               return logEntries
+            tempquery = SQL(le['query'])
+            le['hash'] = tempquery.fingerprint()
+            logEntries = updateLogEntries(logEntries, le)
+        return logEntries, len(response['events'])
+    else:
+        return logEntries, 0
 
 def getLogEntries(logGroup, logStreamName, startTime, endTime):
     key = logStreamName + "_" + str(startTime) + "_" + str(endTime)
@@ -290,61 +330,22 @@ def getLogEntries(logGroup, logStreamName, startTime, endTime):
     logEntries = {}
     budgetLeft = MAX_QUERIES
     response = client.get_log_events(logGroupName = logGroup,logStreamName = logStreamName,startTime = startTime, endTime = endTime,startFromHead=False)
-    logger.info("LE1: {}".format(len(response['events'])))
-    budgetLeft = budgetLeft - len(response['events'])
+    logEntries, tempCount = processCloudWatchResponse(response, logEntries)
+    budgetLeft = budgetLeft - tempCount
     logger.info("Budget Left: {}".format(budgetLeft))
-    oldestTimestamp = endTime;
-    newestTimestamp = endTime;
-    if ( len(response['events']) > 0 ):
-        ts = response['events'][0]['timestamp']
-        if ( ts > newestTimestamp ):
-            newestTimestamp = ts
-        if ( ts < oldestTimestamp ):
-            oldestTimestamp = ts
-        logger.info("TS: {} is {}".format(ts,datetime.datetime.fromtimestamp(ts/1000.0)))
-        ts = response['events'][len(response['events']) - 1]['timestamp']
-        if ( ts > newestTimestamp ):
-            newestTimestamp = ts
-        if ( ts < oldestTimestamp ):
-            oldestTimestamp = ts
-        logger.info("TS: {} is {}".format(ts,datetime.datetime.fromtimestamp(ts/1000.0)))
-        for event in response['events']:
-            le = parseLogEntry(event)
-            if le is None:
-               return None
-            tempquery = SQL(le['query'])
-            le['hash'] = tempquery.fingerprint()
-            logEntries = updateLogEntries(logEntries, le)
-    while (budgetLeft > 0 and len(response['events']) > 0):
+
+    while (budgetLeft > 0 and tempCount > 0):
         response = client.get_log_events(logGroupName = logGroup,logStreamName = logStreamName, startTime = startTime, endTime = endTime, startFromHead=False, nextToken=response['nextBackwardToken'])
-        logger.info("LE2: {}".format(len(response['events'])))
-        budgetLeft = budgetLeft - len(response['events'])
+        logEntries, tempCount = processCloudWatchResponse(response, logEntries)
+        budgetLeft = budgetLeft - tempCount
         logger.info("Budget Left: {}".format(budgetLeft))
-        if ( len(response['events']) > 0 ):
-            ts = response['events'][0]['timestamp']
-            if ( ts > newestTimestamp ):
-                 newestTimestamp = ts
-            if ( ts < oldestTimestamp ):
-                oldestTimestamp = ts
-            logger.info("TS: {} is {}".format(ts,datetime.datetime.fromtimestamp(ts/1000.0)))
-            ts = response['events'][len(response['events']) - 1]['timestamp']
-            if ( ts > newestTimestamp ):
-                newestTimestamp = ts
-            if ( ts < oldestTimestamp ):
-                oldestTimestamp = ts
-            logger.info("TS: {} is {}".format(ts,datetime.datetime.fromtimestamp(ts/1000.0)))
-            for event in response['events']:
-                le = parseLogEntry(event)
-                if le is None:
-                    return None
-                tempquery = SQL(le['query'])
-                le['hash'] = tempquery.fingerprint()
-                logEntries = updateLogEntries(logEntries, le)
-    logger.info('TOTAL Deduped SQL Found: {}'.format(len(logEntries)))
-    key = logStreamName + "_" + str(oldestTimestamp) + "_" + str(newestTimestamp)
+
+    logger.info('TOTAL Queries Parsed: {}'.format(logEntries['METRICS']['TOTAL_QUERY_COUNT']))
+    logger.info('TOTAL Deduped SQL Found: {}'.format(len(logEntries['QUERIES'])))
+    key = logStreamName + "_" + str(logEntries['METRICS']['FIRST_TS']) + "_" + str(logEntries['METRICS']['LAST_TS'])
     logger.info("Key: {}".format(key))
-    g.logEntriesCache[key] = { 'logEntries': logEntries, 'lastModifiedTime': time.time() * 1000, 'oldestTimestamp': oldestTimestamp, 'newestTimestamp': newestTimestamp }
-    return ( g.logEntriesCache[key]['logEntries'], g.logEntriesCache[key]['oldestTimestamp'], g.logEntriesCache[key]['newestTimestamp'] )
+    g.logEntriesCache[key] = { 'logEntries': logEntries, 'lastModifiedTime': time.time() * 1000, 'oldestTimestamp': logEntries['METRICS']['FIRST_TS'], 'newestTimestamp': logEntries['METRICS']['LAST_TS']}
+    return ( g.logEntriesCache[key]['logEntries'])
 
 
 def describeLogStreams(logGroupNameValue):
@@ -385,7 +386,20 @@ def urlencode_filter(s):
     s = s.encode('utf8')
     s = urllib.parse.quote_plus(s)
     return Markup(s)
-#aws logs describe-log-groups --log-group-name-prefix /aws/rds/instance/ |  jq '.[] | .[] | select(.logGroupName | contains("slowquery"))'
+
+@app.template_filter('tsconvert')
+def ts_to_string(s):
+    if isinstance(s, int):
+        possible_ts = s
+        # After 1/1/2018 and before 1/1/2050
+        if (possible_ts > 1514764800000 ) and ( possible_ts < 2524608000000 ):
+            s = "{} [ {} ]".format(
+                datetime.datetime.fromtimestamp(possible_ts/1000.0),
+                possible_ts
+            )
+    return Markup(s)
+
+
 if __name__ == '__main__':
     # This starts the built in flask server, not designed for production use
     logger.setLevel(logging.INFO)

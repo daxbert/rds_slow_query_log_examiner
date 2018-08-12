@@ -5,7 +5,11 @@
 <ul class="list-group">
 {% for k in stream %}
   <li class="list-group-item">
-  {{k}}: {{stream[k]}}
+  {% if 'Time' in k %}
+    {{k}}: {{stream[k] | tsconvert}}
+  {% else %}
+    {{k}}: {{stream[k]}}
+  {% endif %}
   </li>
 {% endfor %}
 </ul>
