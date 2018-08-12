@@ -32,10 +32,10 @@ class SQL:
         # look for UUID like things, and replace with {UUID}
         UUIDs={
            'regex': [
-                re.compile(r"[0-9a-f]{32}"),
-                re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+                re.compile("[\"']*[0-9a-f]{32}['\"]*"),
+                re.compile("[\"']*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[\"']*")
             ],
-            'replace': "'{UUID}'"
+            'replace': "{UUID}"
         },
         # look for things that look like a SQL date, and replace with {DATE}
         Dates={
@@ -46,7 +46,7 @@ class SQL:
                 re.compile(r"'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}-\d{2}:\d{2}'"),
                 re.compile(r"'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}'"),
             ],
-            'replace': "'{DATE}'"
+            'replace': "{DATE}"
         },
         # Hibernate builds queries with #'d field names
         # remove the specific #s, and make more generic
