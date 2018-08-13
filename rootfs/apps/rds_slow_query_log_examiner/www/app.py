@@ -181,19 +181,30 @@ def stream_page(option, arn, region):
         if 'lastEventTimestamp' in stream:
             start_timestamp = stream['lastEventTimestamp'] - ( 1000 * 60 * 5 )
             end_timestamp = stream['lastEventTimestamp']
+            # was a startDate specified in the URL?
             if ( startDateTimestamp ):
-                logger.info("startDateTimestamp specified: {}".format(startDateTimestamp))
+                logger.info("startDateTimestamp specified in URL: {}".format(startDateTimestamp))
                 if ( startDateTimestamp < stream['firstEventTimestamp'] ):
+                    logger.info("start_timestamp is before the first event in this stream, resetting to first event")
                     start_timestamp = stream['firstEventTimestamp']
                 else:
                     start_timestamp = startDateTimestamp
+                if (startDateTimestamp > stream['lastEventTimestamp']):
+                    logger.info("start_timestamp is after the last event in this stream, resetting to last event -1 minute")
+                    start_timestamp = stream['lastEventTimestamp'] - ( 1000 * 60 )
             logger.info("start_timestamp: {}".format(start_timestamp))
+            # was an endDate specified in the URL?
             if ( endDateTimestamp ):
-                logger.info("endDateTimestamp specified: {}".format(endDateTimestamp))
+                logger.info("endDateTimestamp specified in URL: {}".format(endDateTimestamp))
                 if ( endDateTimestamp > stream['lastEventTimestamp'] ):
+                    logger.info("end_timestamp is after the last event in this stream, resetting to last event")
                     end_timestamp = stream['lastEventTimestamp']
                 else:
                     end_timestamp = endDateTimestamp
+            if ( end_timestamp < start_timestamp ):
+                logger.info("end_timestamp is actually before start_timestamp: {} < {}".format(end_timestamp,start_timestamp))
+                logger.info("Adjusting end_timestamp to one minute after start_timestamp")
+                end_timestamp = start_timestamp + (1000 * 60)
             logger.info("end_timestamp: {}".format(end_timestamp))
 
         if ( option == "refresh" ):
@@ -208,11 +219,17 @@ def stream_page(option, arn, region):
             ui['count'] = spanActive
             if 'lastEventTimestamp' in stream:
                 logEntries = getLogEntries(stream['logGroup'], stream['logStreamName'], start_timestamp, end_timestamp)
-                oldestTimestamp=logEntries['METRICS']['FIRST_TS']
-                newestTimestamp=logEntries['METRICS']['LAST_TS']
-                logger.info("oldestTimestamp: {} {}".format(oldestTimestamp, datetime.datetime.fromtimestamp(oldestTimestamp/1000.0)))
-                logger.info("newestTimestamp: {} {}".format(newestTimestamp, datetime.datetime.fromtimestamp(newestTimestamp/1000.0)))
-            return render_template('stream_data.html', stream = stream, ui = ui, logEntries = logEntries['QUERIES'], os = os, start_timestamp = oldestTimestamp, end_timestamp = newestTimestamp )
+                if 'METRICS' in logEntries:
+                    oldestTimestamp=logEntries['METRICS']['FIRST_TS']
+                    newestTimestamp=logEntries['METRICS']['LAST_TS']
+                    logger.info("oldestTimestamp: {} {}".format(oldestTimestamp, datetime.datetime.fromtimestamp(oldestTimestamp/1000.0)))
+                    logger.info("newestTimestamp: {} {}".format(newestTimestamp, datetime.datetime.fromtimestamp(newestTimestamp/1000.0)))
+                    return render_template('stream_data.html', stream = stream, ui = ui, logEntries = logEntries['QUERIES'], os = os, start_timestamp = oldestTimestamp, end_timestamp = newestTimestamp )
+                else:
+                    logger.info("No data returned for arn: {}, in this time window".format(arn))
+                    return render_template('stream_data.html', stream=stream, ui=ui, logEntries= {},
+                                           os=os, start_timestamp=start_timestamp, end_timestamp=end_timestamp)
+
 
     logger.info("arn: {} NOT FOUND, returning 404".format(arn))
     abort(404)
@@ -340,11 +357,25 @@ def getLogEntries(logGroup, logStreamName, startTime, endTime):
         budgetLeft = budgetLeft - tempCount
         logger.info("Budget Left: {}".format(budgetLeft))
 
-    logger.info('TOTAL Queries Parsed: {}'.format(logEntries['METRICS']['TOTAL_QUERY_COUNT']))
-    logger.info('TOTAL Deduped SQL Found: {}'.format(len(logEntries['QUERIES'])))
-    key = logStreamName + "_" + str(logEntries['METRICS']['FIRST_TS']) + "_" + str(logEntries['METRICS']['LAST_TS'])
-    logger.info("Key: {}".format(key))
-    g.logEntriesCache[key] = { 'logEntries': logEntries, 'lastModifiedTime': time.time() * 1000, 'oldestTimestamp': logEntries['METRICS']['FIRST_TS'], 'newestTimestamp': logEntries['METRICS']['LAST_TS']}
+    if 'METRICS' in logEntries:
+        logger.info('TOTAL Queries Parsed: {}'.format(logEntries['METRICS']['TOTAL_QUERY_COUNT']))
+        logger.info('TOTAL Deduped SQL Found: {}'.format(len(logEntries['QUERIES'])))
+        key = logStreamName + "_" + str(logEntries['METRICS']['FIRST_TS']) + "_" + str(logEntries['METRICS']['LAST_TS'])
+        logger.info("Key: {}".format(key))
+        g.logEntriesCache[key] = { 'logEntries': logEntries,
+                                   'lastModifiedTime': time.time() * 1000,
+                                   'oldestTimestamp': logEntries['METRICS']['FIRST_TS'],
+                                   'newestTimestamp': logEntries['METRICS']['LAST_TS']
+                                   }
+    else:
+        #  logEntries has no METRICS.. and therefore no entries
+        #  update cache for startTime, endTime as this will
+        #  be a "negative" cache
+        g.logEntriesCache[key] = {'logEntries': logEntries,
+                                  'lastModifiedTime': time.time() * 1000,
+                                  'oldestTimestamp': startTime,
+                                  'newestTimestamp': endTime
+                                  }
     return ( g.logEntriesCache[key]['logEntries'])
 
 
