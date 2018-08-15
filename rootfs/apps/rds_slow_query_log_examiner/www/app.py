@@ -224,11 +224,26 @@ def stream_page(option, arn, region):
                     newestTimestamp=logEntries['METRICS']['LAST_TS']
                     logger.info("oldestTimestamp: {} {}".format(oldestTimestamp, datetime.datetime.fromtimestamp(oldestTimestamp/1000.0)))
                     logger.info("newestTimestamp: {} {}".format(newestTimestamp, datetime.datetime.fromtimestamp(newestTimestamp/1000.0)))
-                    return render_template('stream_data.html', stream = stream, ui = ui, logEntries = logEntries['QUERIES'], os = os, start_timestamp = oldestTimestamp, end_timestamp = newestTimestamp )
+                    return render_template('stream_data.html',
+                                           stream = stream,
+                                           ui = ui,
+                                           metrics = logEntries['METRICS'],
+                                           logEntries = logEntries['QUERIES'],
+                                           os = os,
+                                           start_timestamp = oldestTimestamp,
+                                           end_timestamp = newestTimestamp
+                                           )
                 else:
                     logger.info("No data returned for arn: {}, in this time window".format(arn))
-                    return render_template('stream_data.html', stream=stream, ui=ui, logEntries= {},
-                                           os=os, start_timestamp=start_timestamp, end_timestamp=end_timestamp)
+                    return render_template('stream_data.html',
+                                           stream=stream,
+                                           ui=ui,
+                                           metrics={},
+                                           logEntries= {},
+                                           os=os,
+                                           start_timestamp=start_timestamp,
+                                           end_timestamp=end_timestamp
+                                           )
 
 
     logger.info("arn: {} NOT FOUND, returning 404".format(arn))
@@ -305,6 +320,10 @@ def updateLogEntries(logEntries,le):
 
     if 'TOTAL_QUERY_COUNT' in logEntries['METRICS']:
         logEntries['METRICS']['TOTAL_QUERY_COUNT'] += 1
+        logEntries['METRICS']['TOTAL_ROWS']   += int(le['rows'])
+        logEntries['METRICS']['TOTAL_SENT']   += int(le['sent'])
+        logEntries['METRICS']['TOTAL_QTIME']  += float(le['qtime'])
+        logEntries['METRICS']['TOTAL_LTIME']  += float(le['ltime'])
         ts = le['event']['timestamp']
         if ( ts < logEntries['METRICS']['FIRST_TS']):
             logEntries['METRICS']['FIRST_TS'] = ts
@@ -314,6 +333,10 @@ def updateLogEntries(logEntries,le):
         logEntries['METRICS']['TOTAL_QUERY_COUNT'] = 1
         logEntries['METRICS']['FIRST_TS'] = le['event']['timestamp']
         logEntries['METRICS']['LAST_TS'] = le['event']['timestamp']
+        logEntries['METRICS']['TOTAL_ROWS'] = int(le['rows'])
+        logEntries['METRICS']['TOTAL_SENT'] = int(le['sent'])
+        logEntries['METRICS']['TOTAL_QTIME'] = float(le['qtime'])
+        logEntries['METRICS']['TOTAL_LTIME'] = float(le['ltime'])
 
     return logEntries
 
