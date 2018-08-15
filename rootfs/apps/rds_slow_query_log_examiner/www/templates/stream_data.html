@@ -36,11 +36,11 @@
 <table hidden id="datatable" class="table">
 <thead>
     <tr>
-     <th id=count scope="col">Count</th>
-     <th scope="col">Rows Examined</th>
-     <th scope="col">Rows Sent</th>
-     <th scope="col">Query Time</th>
-     <th scope="col">Lock Time</th>
+        <th id=count scope="col">Count<p id="TOTAL_QUERY_COUNT"></p></th>
+     <th scope="col">Rows Examined<br><p id="TOTAL_ROWS"></p></th>
+     <th scope="col">Rows Sent<br><p id="TOTAL_SENT"></p></th>
+     <th scope="col">Query Time<br><p id="TOTAL_QTIME"></p></th>
+     <th scope="col">Lock Time<br><p id="TOTAL_LTIME"></p></th>
      <th scope="col">Query</th>
     </tr>
 </thead>
@@ -68,6 +68,14 @@
 {% endblock %}
 {% block footer %}
 <script type="text/javascript">
+const numberWithCommas = (x) => {
+  return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+document.getElementById("TOTAL_QUERY_COUNT").innerHTML = "[" + numberWithCommas({{metrics.TOTAL_QUERY_COUNT}}) + "]"
+document.getElementById("TOTAL_ROWS").innerHTML = "[" + numberWithCommas({{metrics.TOTAL_ROWS}}) + "]"
+document.getElementById("TOTAL_SENT").innerHTML = "[" + numberWithCommas({{metrics.TOTAL_SENT}}) + "]"
+document.getElementById("TOTAL_QTIME").innerHTML = "[" + ({{metrics.TOTAL_QTIME}}).toFixed(4) + "]"
+document.getElementById("TOTAL_LTIME").innerHTML = "[" + ({{metrics.TOTAL_LTIME}}).toFixed(4) + "]"
 $(document).ready(function() {
     $('#datatable').DataTable( {
         "deferRender": true,
