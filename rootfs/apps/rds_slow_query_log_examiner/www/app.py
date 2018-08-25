@@ -15,7 +15,8 @@ import os
 import shelve
 os.environ["AWS_DEFAULT_REGION"] = "us-west-2"
 
-MAX_QUERIES=20000
+MAX_QUERIES_TO_PARSE=20000
+MAX_QUERIES_TO_APPEND=10
 
 app = Flask(__name__)
 logger = logging.getLogger('rds_slow_query_log_examiner')
@@ -101,6 +102,7 @@ def parseLogEntry(cw_event):
     rows = None
     host = None
     user = None
+    session = None
     for line in cw_event['message'].splitlines():
         logger.debug("LINE: {}".format(line))
         userinfo = regexUserInfo.match(line)
@@ -134,9 +136,7 @@ def parseLogEntry(cw_event):
     if any(x is None for x in [rows,qtime,ltime,user,host]):
         logger.info("PARSE_FAILED: {}".format(cw_event))
         logger.info("PARSE_FAILED: {} {} {} {} {}".format(rows,qtime,ltime,user,host))
-        return None
-    else:
-        return { 'event': cw_event, 'qtime': qtime, 'session': session, 'rows': rows, 'sent': sent, 'ltime': ltime, 'query': query, 'raw': cw_event['message'], 'timestamp': cw_event['timestamp'] }
+    return { 'event': cw_event, 'qtime': qtime, 'session': session, 'rows': rows, 'sent': sent, 'ltime': ltime, 'query': query, 'raw': cw_event['message'], 'timestamp': cw_event['timestamp'] }
 
 @app.route('/<region>/stream/<option>/<path:arn>/', methods=['GET'])
 def stream_page(option, arn, region):
@@ -300,7 +300,7 @@ def updateLogEntries(logEntries,le):
 
     if le['hash'] in logEntries['QUERIES']:
         leqh = logEntries['QUERIES'][le['hash']]
-        if ( len(leqh['queries']) < MAX_QUERIES ):
+        if ( len(leqh['queries']) < MAX_QUERIES_TO_APPEND ):
             leqh['queries'].append(le)
             logger.debug("LEN: {}".format(len(leqh['queries'])))
         leqh['totalcount']  += 1
@@ -308,14 +308,19 @@ def updateLogEntries(logEntries,le):
         leqh['totalsent']   += int(le['sent'])
         leqh['totalqtime']  += float(le['qtime'])
         leqh['totalltime']  += float(le['ltime'])
+        for metric in ("sent", "rows", "qtime", "ltime"):
+            if (le[metric] > leqh['slowest'][metric][metric]):
+                leqh['slowest'][metric] = le
     else:
         logEntries['QUERIES'][le['hash']] = {
-                                   'queries': [ le ],
-                                   'totalcount' : 1,
-                                   'totalsent' : int(le['sent']),
-                                   'totalrows' : int(le['rows']),
-                                   'totalqtime' : float(le['qtime']),
-                                   'totalltime' : float(le['ltime'])
+            'queries': [ le ],
+            'slowest': { 'sent': le, 'rows': le, 'qtime': le, 'ltime': le},
+            'totalcount' : 1,
+            'hash': le['hash'],
+            'totalsent' : int(le['sent']),
+            'totalrows' : int(le['rows']),
+            'totalqtime' : float(le['qtime']),
+            'totalltime' : float(le['ltime'])
         }
 
     if 'TOTAL_QUERY_COUNT' in logEntries['METRICS']:
@@ -368,7 +373,7 @@ def getLogEntries(logGroup, logStreamName, startTime, endTime):
             return ( g.logEntriesCache[key]['logEntries'], g.logEntriesCache[key]['oldestTimestamp'], g.logEntriesCache[key]['newestTimestamp'] )
     client = boto3.client('logs')
     logEntries = {}
-    budgetLeft = MAX_QUERIES
+    budgetLeft = MAX_QUERIES_TO_PARSE
     response = client.get_log_events(logGroupName = logGroup,logStreamName = logStreamName,startTime = startTime, endTime = endTime,startFromHead=False)
     logEntries, tempCount = processCloudWatchResponse(response, logEntries)
     budgetLeft = budgetLeft - tempCount

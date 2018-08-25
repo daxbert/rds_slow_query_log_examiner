@@ -33,75 +33,106 @@
     </div>
 </div>
 </form>
-<table hidden id="datatable" class="table">
-<thead>
-    <tr>
-        <th id=count scope="col">Count<p id="TOTAL_QUERY_COUNT"></p></th>
-     <th scope="col">Rows Examined<br><p id="TOTAL_ROWS"></p></th>
-     <th scope="col">Rows Sent<br><p id="TOTAL_SENT"></p></th>
-     <th scope="col">Query Time<br><p id="TOTAL_QTIME"></p></th>
-     <th scope="col">Lock Time<br><p id="TOTAL_LTIME"></p></th>
-     <th scope="col">Query</th>
-    </tr>
-</thead>
-<tbody>
-{% for entry in logEntries.items()|sort(reverse=True,attribute='1.totalqtime') %}
-<tr>
-    <td>{{entry.1.totalcount}}</td>
-    <td>{{entry.1.totalrows}}</td>
-    <td>{{entry.1.totalsent}}</td>
-    <td>{{entry.1.totalqtime}}</td>
-    <td>{{entry.1.totalltime}}</td>
-    <td>{{entry.0}}</td>
-<!-- 
-<pre>
-{{entry.1.queries.0}}
-{{entry.1.queries.1}}
-{{entry.1.queries.2}}
-{{entry.1.queries.3}}
-</pre>
--->
-</tr>
-{% endfor %}
-</tbody>
-</table>
+<table hidden id="datatable" class="table"></table>
 {% endblock %}
 {% block footer %}
 <script type="text/javascript">
+var table = {}
+var dataSet = [
+    {% for entryKey, entry in logEntries.items() %}
+    {{ entry | tojson }},
+    {% endfor %}
+]
+
 const numberWithCommas = (x) => {
   return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
-document.getElementById("TOTAL_QUERY_COUNT").innerHTML = "[" + numberWithCommas({{metrics.TOTAL_QUERY_COUNT}}) + "]"
-document.getElementById("TOTAL_ROWS").innerHTML = "[" + numberWithCommas({{metrics.TOTAL_ROWS}}) + "]"
-document.getElementById("TOTAL_SENT").innerHTML = "[" + numberWithCommas({{metrics.TOTAL_SENT}}) + "]"
-document.getElementById("TOTAL_QTIME").innerHTML = "[" + ({{metrics.TOTAL_QTIME}}).toFixed(4) + "]"
-document.getElementById("TOTAL_LTIME").innerHTML = "[" + ({{metrics.TOTAL_LTIME}}).toFixed(4) + "]"
+function detailFormat(d){
+    // `d` is the original data object for the row
+    console.log(d);
+    var detail = '<table cellpadding="5" cellspacing="0" border="0" style="padding-left:50px;">';
+    for (metric of [ "rows", "sent", "qtime", "ltime" ]){
+        var qtime = parseFloat(d.slowest[metric].qtime)
+        var ltime = parseFloat(d.slowest[metric].ltime)
+        var raw = d.slowest[metric].raw
+        raw = raw.replace(/(?:\r\n|\r|\n)/g, '<br>');
+        detail += '<tr width="100%">' +
+            '<td>Slowest ' + metric + '</td>' +
+            '<td>' + numberWithCommas(d.slowest[metric].rows) + '</td>' +
+            '<td>' + numberWithCommas(d.slowest[metric].sent) + '</td>' +
+            '<td>' + qtime.toFixed(4) + '</td>' +
+            '<td>' + ltime.toFixed(4) + '</td>' +
+            '<td>&nbsp;</td>' +
+            '<td>' + raw + '</td>' +
+        '</tr>'
+    }
+    for ( x = 0; x < 4 && x < d.queries.length; x++ ){
+        var qtime = parseFloat(d.queries[x].qtime)
+        var ltime = parseFloat(d.queries[x].ltime)
+        var raw = d.queries[x].raw
+        raw = raw.replace(/(?:\r\n|\r|\n)/g, '<br>');
+        detail += '<tr width="100%">' +
+            '<td>&nbsp;</td>' +
+            '<td>' + numberWithCommas(d.queries[x].rows) + '</td>' +
+            '<td>' + numberWithCommas(d.queries[x].sent) + '</td>' +
+            '<td>' + qtime.toFixed(4) + '</td>' +
+            '<td>' + ltime.toFixed(4) + '</td>' +
+            '<td>&nbsp;</td>' +
+            '<td>' + raw + '</td>' +
+        '</tr>'
+    }
+    detail += '</table>';
+    return detail;
+}
+
 $(document).ready(function() {
-    $('#datatable').DataTable( {
+    table = $('#datatable').DataTable( {
         "deferRender": true,
         "order": [[ 0, "desc" ]],
+        data: dataSet,
         "aoColumns": [
             { 
-                "orderSequence": [ "desc", "asc" ], 
-                render: $.fn.dataTable.render.number(',','.')
+                "title": "Count<p id='TOTAL_QUERY_COUNT'></p>",
+                "data": "totalcount",
+                "orderSequence": [ "desc", "asc" ],
+                "render": $.fn.dataTable.render.number(',','.')
             },
             { 
+                "title": "Rows Examined<br><p id='TOTAL_ROWS'></p>",
+                "data": "totalrows",
                 "orderSequence": [ "desc", "asc" ] ,
-                render: $.fn.dataTable.render.number(',','.') 
+                "render": $.fn.dataTable.render.number(',','.')
             },
             { 
+                "title": "Rows Sent<br><p id='TOTAL_SENT'></p>",
+                "data": "totalsent",
                 "orderSequence": [ "desc", "asc" ] ,
-              render: $.fn.dataTable.render.number(',','.') 
+                "render": $.fn.dataTable.render.number(',','.')
             },
             { 
+                "title": "Query Time<br><p id='TOTAL_QTIME'></p>",
+                "data": "totalqtime",
                 "orderSequence": [ "desc", "asc" ] ,
-              render: $.fn.dataTable.render.number(',','.',4) 
+                "render": $.fn.dataTable.render.number(',','.',4)
             },
             { 
+                "title": "Lock Time<br><p id='TOTAL_LTIME'></p>",
+                "data": "totalltime",
                 "orderSequence": [ "desc", "asc" ] ,
-              render: $.fn.dataTable.render.number(',','.',4) 
+                "render": $.fn.dataTable.render.number(',','.',4)
             },
-            null
+            {
+                "title": "+/-",
+                "className": 'details-control',
+                "orderable":  false,
+                "data":   null,
+                "defaultContent": '<i class="fa fa-plus-square" aria-hidden="true"></i>'
+            },
+            {
+                "title": "Query",
+                "data": "hash",
+                "defaultContent": ''
+            }
         ],
     } );
     $(function () {
@@ -124,7 +155,38 @@ $(document).ready(function() {
             $('#datetimepicker1').datetimepicker('maxDate', e.date);
         });
     });
+
+    document.getElementsByClassName("table")[0].removeAttribute('hidden');
+
+
+    // Add event listener for opening and closing details
+    $('#datatable tbody').on('click', 'td.details-control', function () {
+        var tr = $(this).closest('tr');
+        var tdi = tr.find("i.fa");
+        var row = table.row(tr);
+
+        if (row.child.isShown()) {
+            // This row is already open - close it
+            row.child.hide();
+            tr.removeClass('shown');
+            tdi.first().removeClass('fa-minus-square');
+            tdi.first().addClass('fa-plus-square');
+        }
+        else {
+            // Open this row
+            row.child(detailFormat(row.data())).show();
+            tr.addClass('shown');
+            tdi.first().removeClass('fa-plus-square');
+            tdi.first().addClass('fa-minus-square');
+        }
+    });
+
+
+        document.getElementById("TOTAL_QUERY_COUNT").innerHTML = "[" + numberWithCommas({{metrics.TOTAL_QUERY_COUNT}}) + "]"
+        document.getElementById("TOTAL_ROWS").innerHTML = "[" + numberWithCommas({{metrics.TOTAL_ROWS}}) + "]"
+        document.getElementById("TOTAL_SENT").innerHTML = "[" + numberWithCommas({{metrics.TOTAL_SENT}}) + "]"
+        document.getElementById("TOTAL_QTIME").innerHTML = "[" + ({{metrics.TOTAL_QTIME}}).toFixed(4) + "]"
+        document.getElementById("TOTAL_LTIME").innerHTML = "[" + ({{metrics.TOTAL_LTIME}}).toFixed(4) + "]"
 } );
-document.getElementsByClassName("table")[0].removeAttribute('hidden');
 </script>
 {% endblock %}
