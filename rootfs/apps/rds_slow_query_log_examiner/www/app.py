@@ -310,12 +310,13 @@ def updateLogEntries(logEntries,le):
         leqh['totalltime']  += float(le['ltime'])
     else:
         logEntries['QUERIES'][le['hash']] = {
-                                   'queries': [ le ],
-                                   'totalcount' : 1,
-                                   'totalsent' : int(le['sent']),
-                                   'totalrows' : int(le['rows']),
-                                   'totalqtime' : float(le['qtime']),
-                                   'totalltime' : float(le['ltime'])
+            'queries': [ le ],
+            'totalcount' : 1,
+            'hash': le['hash'],
+            'totalsent' : int(le['sent']),
+            'totalrows' : int(le['rows']),
+            'totalqtime' : float(le['qtime']),
+            'totalltime' : float(le['ltime'])
         }
 
     if 'TOTAL_QUERY_COUNT' in logEntries['METRICS']:
