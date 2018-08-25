@@ -101,6 +101,7 @@ def parseLogEntry(cw_event):
     rows = None
     host = None
     user = None
+    session = None
     for line in cw_event['message'].splitlines():
         logger.debug("LINE: {}".format(line))
         userinfo = regexUserInfo.match(line)
@@ -134,9 +135,7 @@ def parseLogEntry(cw_event):
     if any(x is None for x in [rows,qtime,ltime,user,host]):
         logger.info("PARSE_FAILED: {}".format(cw_event))
         logger.info("PARSE_FAILED: {} {} {} {} {}".format(rows,qtime,ltime,user,host))
-        return None
-    else:
-        return { 'event': cw_event, 'qtime': qtime, 'session': session, 'rows': rows, 'sent': sent, 'ltime': ltime, 'query': query, 'raw': cw_event['message'], 'timestamp': cw_event['timestamp'] }
+    return { 'event': cw_event, 'qtime': qtime, 'session': session, 'rows': rows, 'sent': sent, 'ltime': ltime, 'query': query, 'raw': cw_event['message'], 'timestamp': cw_event['timestamp'] }
 
 @app.route('/<region>/stream/<option>/<path:arn>/', methods=['GET'])
 def stream_page(option, arn, region):
