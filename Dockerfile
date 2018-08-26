@@ -11,12 +11,8 @@ RUN \
     yum install -y python36 && \
     cd /tmp && \
     wget https://bootstrap.pypa.io/get-pip.py  && \
-    python36  get-pip.py && \
-	pip install pyopenssl awscli urllib3 boto3 Flask && \
-    yum install -y http://www.percona.com/downloads/percona-release/redhat/0.1-6/percona-release-0.1-6.noarch.rpm  && \
-    yum install -y percona-toolkit && \
-    yum install -y https://download.postgresql.org/pub/repos/yum/9.6/redhat/rhel-7-x86_64/pgdg-centos96-9.6-3.noarch.rpm && \
-    yum install -y pgbadger && \
+    python36 get-pip.py && \
+	pip install pyopenssl awscli boto3 Flask && \
     yum clean all; \
     rm -rf /var/log/apt/lists/*; \
     rm /var/log/yum.log; \
@@ -24,6 +20,7 @@ RUN \
     rm /tmp/*;  
 
 # EXPOSE HTTP / HTTPS
-EXPOSE 5150 5151
+EXPOSE 5150
+# 5151
 ADD ./rootfs /
 CMD ["python36", "/apps/rds_slow_query_log_examiner/www/app.py"]

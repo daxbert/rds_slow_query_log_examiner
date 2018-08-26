@@ -22,36 +22,43 @@ MAX_QUERIES_TO_APPEND=10
 app = Flask(__name__)
 
 logger = logging.getLogger('rds_slow_query_log_examiner')
-logger.setLevel('INFO')
+logger.setLevel(logging.INFO)
+if "DEBUG" in os.environ:
+    logger.setLevel(logging.DEBUG)
 logger.propagate = False
+
 stderr_logs = logging.StreamHandler()
-stderr_logs.setLevel('INFO')
+stderr_logs.setLevel(logging.INFO)
+if "DEBUG" in os.environ:
+    stderr_logs.setLevel(logging.DEBUG)
 stderr_logs.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
 logger.addHandler(stderr_logs)
 
-cacheLock = Lock() # used to avoid concurrent access to the cache...
+
+cacheLock = None # used to avoid concurrent access to the cache...
 lockAcquired = None
+processProtocol = ""
 
 def acquireLock():
     global lockAcquired
     if lockAcquired:
-        logger.debug("Acquiring existing lock: NOP")
+        logger.warning("Acquiring existing lock: NOP {}".format(processProtocol))
     else:
-        logger.debug("Acquiring Lock...")
+        logger.info("Acquiring Lock... {}".format(processProtocol))
         lockAcquired = True
         cacheLock.acquire()
-        logger.debug("Acquired")
+        logger.info("Acquired {}".format(processProtocol))
 
 def releaseLock():
     global lockAcquired
 
     if lockAcquired:
-        logger.debug("Release Lock...")
+        logger.info("Release Lock...{}".format(processProtocol))
         lockAcquired = False
         cacheLock.release()
-        logger.debug("Released")
+        logger.debug("Released {}".format(processProtocol))
     else:
-        logger.debug("Releasing non-existant lock: NOP")
+        logger.warning("Releasing non-existant lock: NOP {}".format(processProtocol))
 
 @app.before_request
 def before_req():
@@ -83,6 +90,7 @@ def regions():
 
     try:
         response = client.describe_regions()
+
         return render_template('regions.html', response=response)
 
     except botocore.exceptions.NoCredentialsError as e:
@@ -300,9 +308,7 @@ def getSlowQueryStreams():
             if ( g.logStreamsCache[os.environ['AWS_DEFAULT_REGION']]['lastModifiedTime'] > oldestViableCacheTimestamp()):
                 return g.logStreamsCache[os.environ['AWS_DEFAULT_REGION']]['logStreams']
 
-    releaseLock()
     logGroups = describeLogGroups()
-    acquireLock()
 
     allLogStreams = {}
     for logGroup in logGroups:
@@ -310,9 +316,7 @@ def getSlowQueryStreams():
             continue
         logger.info('Group: {}'.format(logGroup['logGroupName']))
 
-        releaseLock()
         logStreams = describeLogStreams(logGroup['logGroupName'])
-        acquireLock()
 
         allLogStreams.update(logStreams)
         logger.debug('Streams: {}'.format(logStreams))
@@ -404,25 +408,23 @@ def processCloudWatchResponse(response, logEntries):
 def getLogEntries(logGroup, logStreamName, startTime, endTime):
     key = logStreamName + "_" + str(startTime) + "_" + str(endTime)
     logger.info("Key: {}".format(key))
+
     if key in g.logEntriesCache:
         if g.logEntriesCache[key]['lastModifiedTime'] > oldestViableCacheTimestamp():
             return ( g.logEntriesCache[key]['logEntries'], g.logEntriesCache[key]['oldestTimestamp'], g.logEntriesCache[key]['newestTimestamp'] )
+
     logEntries = {}
     budgetLeft = MAX_QUERIES_TO_PARSE
     client = boto3.client('logs')
 
-    releaseLock()  # let's not keep the lock when we make the API call...
     response = client.get_log_events(logGroupName = logGroup,logStreamName = logStreamName,startTime = startTime, endTime = endTime,startFromHead=False)
-    acquireLock()  # now get the lock back...
 
     logEntries, tempCount = processCloudWatchResponse(response, logEntries)
     budgetLeft = budgetLeft - tempCount
     logger.info("Budget Left: {}".format(budgetLeft))
 
     while (budgetLeft > 0 and tempCount > 0):
-        releaseLock()  # let's not keep the lock when we make the API call...
         response = client.get_log_events(logGroupName = logGroup,logStreamName = logStreamName, startTime = startTime, endTime = endTime, startFromHead=False, nextToken=response['nextBackwardToken'])
-        acquireLock()  # now get the lock back...
 
         logEntries, tempCount = processCloudWatchResponse(response, logEntries)
         budgetLeft = budgetLeft - tempCount
@@ -453,12 +455,14 @@ def getLogEntries(logGroup, logStreamName, startTime, endTime):
 def describeLogStreams(logGroupNameValue):
     client = boto3.client('logs')
     logStreams = {}
+
     response = client.describe_log_streams(logGroupName=logGroupNameValue)
     for elem in response['logStreams']:
         elem['logGroup'] = logGroupNameValue
         logStreams[elem['arn']] = elem
     while 'nextToken' in response:
         response = client.describe_log_streams(logGroupName=logGroupNameValue, nextToken=response['nextToken'])
+
         for elem in response['logStreams']:
             elem['logGroup'] = logGroupNameValue
             logStreams[elem['arn']] = elem
@@ -470,10 +474,12 @@ def describeLogStreams(logGroupNameValue):
 def describeLogGroups():
     client = boto3.client('logs')
     logGroups = []
+
     response = client.describe_log_groups(logGroupNamePrefix='/aws/rds/instance',limit=10)
     logGroups = response['logGroups']
     while 'nextToken' in response:
         response = client.describe_log_groups(logGroupNamePrefix='/aws/rds/instance', nextToken=response['nextToken'])
+
         logGroups = logGroups + response['logGroups']
     logger.info('LogGroups Found: {}'.format(len(logGroups)))
     return logGroups
@@ -502,32 +508,42 @@ def ts_to_string(s):
     return Markup(s)
 
 def startHttp():
+    global lockAcquired
+    global processProtocol
     lockAcquired = False
+    processProtocol = "HTTP"
+
     logger.info('Starting HTTP server...')
     if "DEBUG" in os.environ:
         app.run(debug=True, host='0.0.0.0', port=5150)
     else:
         app.run(host='0.0.0.0', port=5150)
     logger.info('HTTP Exiting...')
-    sys.exit(0)
+    os._exit(0)
 
 def startHttps():
-    lockAcquired = False
+    global lockAcquired
+    global processProtocol
+    lockAcquired= False
+    processProtocol = "HTTPS"
     logger.info('Starting HTTPS server...')
     if "DEBUG" in os.environ:
         app.run(ssl_context='adhoc', debug=True, host='0.0.0.0', port=5151)
     else:
         app.run(ssl_context='adhoc', host='0.0.0.0', port=5151)
     logger.info('HTTPS Exiting...')
-    sys.exit(0)
+    os._exit(0)
 
 if __name__ == '__main__':
     # This starts the built in flask server, not designed for production use
-    logger.setLevel(logging.INFO)
+    logger.info('Init Lock Object')
+    cacheLock = Lock()
+    lockAcquired = False
+
     logger.info('Setting up two processes for HTTP/HTTPS')
     p1 = Process(target=startHttp)
-    p2 = Process(target=startHttps)
     p1.start()
+    p2 = Process(target=startHttps)
     p2.start()
     p1.join()
     p2.join()

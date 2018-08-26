@@ -72,5 +72,5 @@ else
     echo "ENTRYPOINT and CMD defined as:"
     egrep "ENTRYPOINT|CMD" Dockerfile
     echo
-    docker run -it -p 0.0.0.0:5150:5150 -e "DEBUG=TRUE" -e "AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID" -e "AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY" $VOLCMD -it $DOCKER_NAME /usr/bin/env bash
+    docker run -it -p 0.0.0.0:5150:5150 -p 0.0.0.0:5151:5151 -e "DEBUG=TRUE" -e "AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID" -e "AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY" $VOLCMD -it $DOCKER_NAME /usr/bin/env bash
 fi
