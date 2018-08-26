@@ -35,23 +35,23 @@ lockAcquired = None
 def acquireLock():
     global lockAcquired
     if lockAcquired:
-        logger.info("Acquiring existing lock: NOP")
+        logger.debug("Acquiring existing lock: NOP")
     else:
-        logger.info("Acquiring Lock...")
+        logger.debug("Acquiring Lock...")
         lockAcquired = True
         cacheLock.acquire()
-        logger.info("Acquired")
+        logger.debug("Acquired")
 
 def releaseLock():
     global lockAcquired
 
     if lockAcquired:
-        logger.info("Release Lock...")
+        logger.debug("Release Lock...")
         lockAcquired = False
         cacheLock.release()
-        logger.info("Released")
+        logger.debug("Released")
     else:
-        logger.info("Releasing non-existant lock: NOP")
+        logger.debug("Releasing non-existant lock: NOP")
 
 @app.before_request
 def before_req():
