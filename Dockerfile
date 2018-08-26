@@ -12,7 +12,7 @@ RUN \
     cd /tmp && \
     wget https://bootstrap.pypa.io/get-pip.py  && \
     python36  get-pip.py && \
-	pip install awscli urllib3 boto3 Flask && \
+	pip install pyopenssl awscli urllib3 boto3 Flask && \
     yum install -y http://www.percona.com/downloads/percona-release/redhat/0.1-6/percona-release-0.1-6.noarch.rpm  && \
     yum install -y percona-toolkit && \
     yum install -y https://download.postgresql.org/pub/repos/yum/9.6/redhat/rhel-7-x86_64/pgdg-centos96-9.6-3.noarch.rpm && \
