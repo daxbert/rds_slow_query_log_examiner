@@ -12,7 +12,7 @@ import shelve
 import urllib
 from markupsafe import Markup
 # import our local classes
-from sql import SQL
+from sql import SqlQuery
 
 os.environ["AWS_DEFAULT_REGION"] = "us-west-2"
 
@@ -34,14 +34,14 @@ if "DEBUG" in os.environ:
 stderr_logs.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
 logger.addHandler(stderr_logs)
 
-
-cacheLock = None  # used to avoid concurrent access to the cache...
+logger.info('Init Lock Object')
+cache_lock = Lock()
 web_protocol = ""
 
 
 def acquire_lock():
     logger.info("Acquiring Lock... {}".format(web_protocol))
-    cacheLock.acquire()
+    cache_lock.acquire()
     logger.info("Opening Cache")
     g.logEntriesCache = shelve.open("logEntriesCache.data", writeback=True)
     g.logStreamsCache = shelve.open("logStreamsCache.data", writeback=True)
@@ -54,7 +54,7 @@ def release_lock():
     logger.info("Release Lock...{}".format(web_protocol))
     g.logEntriesCache.close()
     g.logStreamsCache.close()
-    cacheLock.release()
+    cache_lock.release()
     logger.debug("Released {}".format(web_protocol))
 
 
@@ -461,7 +461,7 @@ def process_cloudwatch_response(response, log_entries, log_stream_name):
             le = parse_log_entry(event)
             if le is None:
                 return log_entries
-            temp_query = SQL(le['query'])
+            temp_query = SqlQuery(le['query'])
             le['hash'] = temp_query.fingerprint()
             log_entries = update_log_entries(log_entries, le)
         return log_entries, len(response['events'])
@@ -632,9 +632,6 @@ def start_https():
 
 if __name__ == '__main__':
     # This starts the built in flask server, not designed for production use
-    logger.info('Init Lock Object')
-    cacheLock = Lock()
-    lockAcquired = False
 
     logger.info('Setting up two processes for HTTP/HTTPS')
     p1 = Process(target=start_http)
