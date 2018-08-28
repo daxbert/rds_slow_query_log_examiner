@@ -9,7 +9,7 @@ TODO:  Add Postgres ( if needed )
 '''
 
 
-class SQL:
+class SqlQuery:
 
     def __init__(self, query):
         self._query = query
