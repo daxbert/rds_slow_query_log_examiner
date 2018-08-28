@@ -1,19 +1,17 @@
 from __future__ import unicode_literals
 from multiprocessing import Process, Lock
 from flask import Flask, request, redirect, jsonify, abort, render_template,  g
-# from werkzeug.exceptions import NotFound
-from sql import SQL
 import botocore
 import time
 import logging
 import datetime
-import copy
 import boto3
-#import settings
 import re
-import pprint
 import os
 import shelve
+# import our local clases
+from sql import SQL
+
 os.environ["AWS_DEFAULT_REGION"] = "us-west-2"
 
 MAX_QUERIES_TO_PARSE=20000
@@ -36,49 +34,24 @@ logger.addHandler(stderr_logs)
 
 
 cacheLock = None # used to avoid concurrent access to the cache...
-lockAcquired = None
 processProtocol = ""
 
 def acquireLock():
-    global lockAcquired
-    if lockAcquired:
-        logger.warning("Acquiring existing lock: NOP {}".format(processProtocol))
-    else:
-        logger.info("Acquiring Lock... {}".format(processProtocol))
-        lockAcquired = True
-        cacheLock.acquire()
-        logger.info("Acquired {}".format(processProtocol))
-
-def releaseLock():
-    global lockAcquired
-
-    if lockAcquired:
-        logger.info("Release Lock...{}".format(processProtocol))
-        lockAcquired = False
-        cacheLock.release()
-        logger.debug("Released {}".format(processProtocol))
-    else:
-        logger.warning("Releasing non-existant lock: NOP {}".format(processProtocol))
-
-@app.before_request
-def before_req():
-    acquireLock()
+    logger.info("Acquiring Lock... {}".format(processProtocol))
+    cacheLock.acquire()
     logger.info("Opening Cache")
-    g.logEntriesCache = shelve.open("logEntriesCache.data",writeback=True)
-    g.logStreamsCache = shelve.open("logStreamsCache.data",writeback=True)
+    g.logEntriesCache = shelve.open("logEntriesCache.data", writeback=True)
+    g.logStreamsCache = shelve.open("logStreamsCache.data", writeback=True)
     logger.info("{}".format(g.logEntriesCache))
     logger.info("{}".format(g.logStreamsCache))
+    logger.info("Acquired {}".format(processProtocol))
 
-@app.after_request
-def after_req(response):
-    logger.info("Closing Cache")
+def releaseLock():
+    logger.info("Release Lock...{}".format(processProtocol))
     g.logEntriesCache.close()
-    if ( g.logStreamsCache is None):
-        os.remove("logStreamsCache.data")
-    else:
-        g.logStreamsCache.close()
-    releaseLock()
-    return response
+    g.logStreamsCache.close()
+    cacheLock.release()
+    logger.debug("Released {}".format(processProtocol))
 
 
 @app.route('/regions', methods=['GET'])
@@ -244,9 +217,12 @@ def stream_page(option, arn, region):
             logger.info("end_timestamp: {}".format(end_timestamp))
 
         if ( option == "refresh" ):
+            acquireLock()
             g.logStreamsCache.close()
             g.logStreamsCache = None
+            releaseLock()
             clearCacheLogEntries(stream['logGroup'], stream['logStreamName'], start_timestamp, end_timestamp)
+
             return redirect("/{}/streams/".format(region), code=302)
 
         logEntries = {}
@@ -300,13 +276,19 @@ def streamlist_page(region):
 
 def oldestViableCacheTimestamp():
    # 5 minutes ago...
-   return ( ( time.time() * 1000 ) - (5 * 60 * 1000 ))
+   return ( ( time.time() * 1000 ) - (60 * 60 * 1000 ))
 
 def getSlowQueryStreams():
+    # Actually hold the lock until we are done with this function...
+    acquireLock()
+
     if ( os.environ['AWS_DEFAULT_REGION'] in g.logStreamsCache ):
         if ( 'lastModifiedTime' in g.logStreamsCache[os.environ['AWS_DEFAULT_REGION']]):
             if ( g.logStreamsCache[os.environ['AWS_DEFAULT_REGION']]['lastModifiedTime'] > oldestViableCacheTimestamp()):
-                return g.logStreamsCache[os.environ['AWS_DEFAULT_REGION']]['logStreams']
+                temp_ls = g.logStreamsCache[os.environ['AWS_DEFAULT_REGION']]['logStreams']
+                releaseLock()
+                return temp_ls
+
 
     logGroups = describeLogGroups()
 
@@ -320,18 +302,27 @@ def getSlowQueryStreams():
 
         allLogStreams.update(logStreams)
         logger.debug('Streams: {}'.format(logStreams))
+
     g.logStreamsCache[os.environ['AWS_DEFAULT_REGION']] = {}
     g.logStreamsCache[os.environ['AWS_DEFAULT_REGION']]['lastModifiedTime'] = time.time() * 1000
     g.logStreamsCache[os.environ['AWS_DEFAULT_REGION']]['logStreams'] = allLogStreams
-    return g.logStreamsCache[os.environ['AWS_DEFAULT_REGION']]['logStreams']
+
+    releaseLock()
+
+    return allLogStreams
+
 
 def clearCacheStreamEntries(logGroup, logStreamName, startTime, endTime):
+    acquireLock()
     if logStreamName in g.logEntriesCache:
         del g.logEntriesCache[logStreamName]
+    releaseLock()
 
 def clearCacheLogEntries(logGroup, logStreamName, startTime, endTime):
+    acquireLock()
     if logStreamName in g.logEntriesCache:
         del g.logEntriesCache[logStreamName]
+    releaseLock()
 
 def updateLogEntries(logEntries,le):
     if not 'QUERIES' in logEntries:
@@ -385,15 +376,17 @@ def updateLogEntries(logEntries,le):
 
     return logEntries
 
-def processCloudWatchResponse(response, logEntries):
+def processCloudWatchResponse(response, logEntries, logStreamName):
     logger.info("Event Count: {}".format(len(response['events'])))
     if ( len(response['events']) > 0 ):
         first_ts = response['events'][0]['timestamp']
         last_ts = response['events'][len(response['events']) - 1]['timestamp']
         if last_ts < first_ts:
             first_ts,last_ts = last_ts,first_ts
-        logger.info("From: {} to {}".format(datetime.datetime.fromtimestamp(first_ts/1000.0),
-                                            datetime.datetime.fromtimestamp(last_ts / 1000.0)))
+        logger.info("Stream: {} from {} to {}".format(
+            logStreamName,
+            datetime.datetime.fromtimestamp(first_ts/1000.0),
+            datetime.datetime.fromtimestamp(last_ts / 1000.0)))
         for event in response['events']:
             le = parseLogEntry(event)
             if le is None:
@@ -409,9 +402,13 @@ def getLogEntries(logGroup, logStreamName, startTime, endTime):
     key = logStreamName + "_" + str(startTime) + "_" + str(endTime)
     logger.info("Key: {}".format(key))
 
+    acquireLock()
     if key in g.logEntriesCache:
         if g.logEntriesCache[key]['lastModifiedTime'] > oldestViableCacheTimestamp():
-            return ( g.logEntriesCache[key]['logEntries'], g.logEntriesCache[key]['oldestTimestamp'], g.logEntriesCache[key]['newestTimestamp'] )
+            temp_array = ( g.logEntriesCache[key]['logEntries'], g.logEntriesCache[key]['oldestTimestamp'], g.logEntriesCache[key]['newestTimestamp'] )
+            releaseLock()
+            return temp_array
+    releaseLock()
 
     logEntries = {}
     budgetLeft = MAX_QUERIES_TO_PARSE
@@ -419,16 +416,18 @@ def getLogEntries(logGroup, logStreamName, startTime, endTime):
 
     response = client.get_log_events(logGroupName = logGroup,logStreamName = logStreamName,startTime = startTime, endTime = endTime,startFromHead=False)
 
-    logEntries, tempCount = processCloudWatchResponse(response, logEntries)
+    logEntries, tempCount = processCloudWatchResponse(response, logEntries, logStreamName)
     budgetLeft = budgetLeft - tempCount
     logger.info("Budget Left: {}".format(budgetLeft))
 
     while (budgetLeft > 0 and tempCount > 0):
         response = client.get_log_events(logGroupName = logGroup,logStreamName = logStreamName, startTime = startTime, endTime = endTime, startFromHead=False, nextToken=response['nextBackwardToken'])
 
-        logEntries, tempCount = processCloudWatchResponse(response, logEntries)
+        logEntries, tempCount = processCloudWatchResponse(response, logEntries, logStreamName)
         budgetLeft = budgetLeft - tempCount
         logger.info("Budget Left: {}".format(budgetLeft))
+
+    acquireLock()
 
     if 'METRICS' in logEntries:
         logger.info('TOTAL Queries Parsed: {}'.format(logEntries['METRICS']['TOTAL_QUERY_COUNT']))
@@ -438,18 +437,23 @@ def getLogEntries(logGroup, logStreamName, startTime, endTime):
         g.logEntriesCache[key] = { 'logEntries': logEntries,
                                    'lastModifiedTime': time.time() * 1000,
                                    'oldestTimestamp': logEntries['METRICS']['FIRST_TS'],
-                                   'newestTimestamp': logEntries['METRICS']['LAST_TS']
+                                   'newestTimestamp': logEntries['METRICS']['LAST_TS'],
                                    }
     else:
         #  logEntries has no METRICS.. and therefore no entries
         #  update cache for startTime, endTime as this will
         #  be a "negative" cache
-        g.logEntriesCache[key] = {'logEntries': logEntries,
-                                  'lastModifiedTime': time.time() * 1000,
-                                  'oldestTimestamp': startTime,
-                                  'newestTimestamp': endTime
-                                  }
-    return ( g.logEntriesCache[key]['logEntries'])
+        g.logEntriesCache[key] = {
+            'logEntries': logEntries,
+            'lastModifiedTime': time.time() * 1000,
+            'oldestTimestamp': startTime,
+            'newestTimestamp': endTime,
+            }
+
+    releaseLock()
+
+    return ( logEntries )
+
 
 
 def describeLogStreams(logGroupNameValue):
