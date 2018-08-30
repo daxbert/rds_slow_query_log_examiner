@@ -70,7 +70,7 @@ SCREENSHOTS TO FOLLOW
 
 ## DEVELOPMENT
 
-[Contribution guidelines for this project](CONTRIBUTE.md)
+[Contribution guidelines for this project](CONTRIBUTING.md)
 
 The instructions below assume you have bash and docker installed on your computer 
 
