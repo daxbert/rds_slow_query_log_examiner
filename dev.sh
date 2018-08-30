@@ -28,12 +28,12 @@ echo
 echo "Executing docker run command"
 echo
 if [ "$RUN" == "True" ]; then
-    docker run -it -p 0.0.0.0:5150:5150 $DOCKER_NAME $*
+    docker run -it -p 0.0.0.0:5151:5151 $DOCKER_NAME $*
 else
     echo
     echo "Starting docker with /usr/bin/env bash"
     echo "ENTRYPOINT and CMD defined as:"
     egrep "ENTRYPOINT|CMD" Dockerfile
     echo
-    docker run -it -p 0.0.0.0:5150:5150 -p 0.0.0.0:5151:5151 -e "DEBUG=TRUE" $VOLCMD -it $DOCKER_NAME /usr/bin/env bash
+    docker run -it -p 0.0.0.0:5151:5151 -e "DEBUG=TRUE" $VOLCMD -it $DOCKER_NAME /usr/bin/env bash
 fi

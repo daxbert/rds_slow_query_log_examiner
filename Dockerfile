@@ -19,8 +19,8 @@ RUN \
     rm -rf /var/cache/yum; \
     rm /tmp/*;  
 
-# EXPOSE HTTP / HTTPS
-EXPOSE 5150
-# 5151
+# EXPOSE HTTPS on 5151
+EXPOSE 5151
+
 ADD ./rootfs /
 CMD ["sh", "-c", "cd /apps/rds_slow_query_log_examiner/www; python36 app.py"]
