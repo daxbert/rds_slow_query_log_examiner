@@ -23,4 +23,4 @@ RUN \
 EXPOSE 5150
 # 5151
 ADD ./rootfs /
-CMD ["python36", "/apps/rds_slow_query_log_examiner/www/app.py"]
+CMD ["sh", "-c", "cd /apps/rds_slow_query_log_examiner/www; python36 app.py"]
