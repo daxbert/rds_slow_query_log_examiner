@@ -42,15 +42,29 @@ web_protocol = ""
 @app.before_request
 def before_request():
     if 'AWS_ACCESS_KEY_ID' not in session:
-        redirect("/credentials?redirect=/")
+        if "credentials" not in request.url:
+            if 'AWS_ACCESS_KEY_ID' in os.environ:
+                logger.info("Credentials Needed - Environment set, using it.")
+                session['AWS_ACCESS_KEY_ID'] = os.environ['AWS_ACCESS_KEY_ID']
+                session['AWS_SECRET_ACCESS_KEY'] = os.environ['AWS_SECRET_ACCESS_KEY']
+            else:
+                logger.info("Credentials Needed - No environment, redirect to login")
+                return redirect("/credentials?redirect=" + request.url)
 
 
 def acquire_lock():
     logger.info("Acquiring Lock... {}".format(web_protocol))
     cache_lock.acquire()
     logger.info("Opening Cache")
-    g.logEntriesCache = shelve.open("logEntriesCache.data", writeback=True)
-    g.logStreamsCache = shelve.open("logStreamsCache.data", writeback=True)
+    if 'AWS_ACCESS_KEY_ID' not in session:
+        logger.info("Can't open cache files, no AWS key available")
+        abort(404)
+
+    log_entries_file = "logEntriesCache.{}.data".format(session['AWS_ACCESS_KEY_ID'])
+    log_streams_file = "logStreamsCache.{}.data".format(session['AWS_ACCESS_KEY_ID'])
+
+    g.logEntriesCache = shelve.open(log_entries_file, writeback=True)
+    g.logStreamsCache = shelve.open(log_streams_file, writeback=True)
     logger.info("{}".format(g.logEntriesCache))
     logger.info("{}".format(g.logStreamsCache))
     logger.info("Acquired {}".format(web_protocol))
@@ -66,17 +80,17 @@ def release_lock():
 
 @app.route('/credentials', methods=['GET', 'POST'])
 def credentials():
-    if "aws_access_key_id" in request.form:
-        session["AWS_ACCESS_KEY_ID"] = request.form["aws_access_key_id"]
-        if "aws_secret_access_key" in request.form:
-            session["AWS_SECRET_ACCESS_KEY"] = request.form["aws_secret_access_key"]
+    if "user_id" in request.form:
+        session["AWS_ACCESS_KEY_ID"] = request.form["user_id"]
+        if "password" in request.form:
+            session["AWS_SECRET_ACCESS_KEY"] = request.form["password"]
             if "redirect" in request.args:
                 return redirect(request.args["redirect"])
             if "redirect" in request.form:
                 return redirect(request.form["redirect"])
     return render_template(
-        'credentials.html', message="Waiting"
-    )
+        'credentials.html'
+    ), 401
 
 
 @app.route('/regions', methods=['GET'])
@@ -85,7 +99,6 @@ def regions():
     Show Region List
     """
     if 'AWS_ACCESS_KEY_ID' not in session:
-        logger.info(session)
         return redirect("/credentials?redirect=/regions")
 
     client = boto3.client(
@@ -102,23 +115,33 @@ def regions():
     except botocore.exceptions.NoCredentialsError as e:
         logger.info("botocore.exceptions.NoCredentialsError in regions()")
         return redirect("/credentials?redirect=/regions")
-
     except botocore.exceptions.BotoCoreError as e:
         logger.info("botocore.exceptions.BotoCoreError in regions()")
+        if e.response['Error']['Code'] == 'AuthError':
+            return redirect("/credentials?redirect=/regions")
         return render_template(
             'error.html',
             code=500,
             name="API Error",
             description=e
         )
-
+    except botocore.exceptions.ClientError as e:
+        if e.response['Error']['Code'] == 'AuthFailure':
+            return redirect("/credentials?redirect=/regions")
+        else:
+            return render_template(
+                'error.html',
+                code=500,
+                name="API Error",
+                description="ClientError error: %s" % e
+            )
     except Exception as e:
         logger.info("Python exception in regions()")
         return render_template(
             'error.html',
             code=500,
             name="Python Exception",
-            description=e
+            description="Unexpected error: %s" % e
         )
 
 
@@ -224,8 +247,8 @@ def stream_page(option, arn, region):
     """
     Show details about stream
     """
-    if 'AWS_ACCESS_KEY_ID' not in session:
-        return redirect("/credentials?redirect=" + request.url)
+#    if 'AWS_ACCESS_KEY_ID' not in session:
+#        return redirect("/credentials?redirect=" + request.url,code=401)
 
     os.environ['AWS_DEFAULT_REGION'] = region
     span_active = 'active'
@@ -364,9 +387,6 @@ def streamlist_page(region):
     """
     Show list of known Clusters
     """
-    if 'AWS_ACCESS_KEY_ID' not in session:
-        logger.info(session)
-        return redirect("/credentials?redirect=/regions")
 
     os.environ['AWS_DEFAULT_REGION'] = region
     stream_dict = get_slow_query_streams()
@@ -654,6 +674,7 @@ def start_http():
 
     app.secret_key = 'does this really matter'
     app.config['SESSION_TYPE'] = 'filesystem'
+    app.config['SESSION_PERMANENT'] = False
 
     logger.info('Starting HTTP server...')
     if "DEBUG" in os.environ:
@@ -670,12 +691,13 @@ def start_https():
 
     app.secret_key = 'does this really matter'
     app.config['SESSION_TYPE'] = 'filesystem'
+    app.config['SESSION_PERMANENT'] = False
 
     logger.info('Starting HTTPS server...')
     if "DEBUG" in os.environ:
-        app.run(ssl_context='adhoc', debug=True, host='0.0.0.0', port=5151)
+        app.run(ssl_context=('ssl/server.pem', 'ssl/key.pem'), debug=True, host='0.0.0.0', port=5151)
     else:
-        app.run(ssl_context='adhoc', host='0.0.0.0', port=5151)
+        app.run(ssl_context=('ssl/server.pem', 'ssl/key.pem'), host='0.0.0.0', port=5151)
     logger.info('HTTPS Exiting...')
     exit(0)
 
