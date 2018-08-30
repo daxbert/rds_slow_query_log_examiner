@@ -38,26 +38,29 @@ TODO:  postgres
     ```
 
 * If building locally, start docker container 
-    ```./run.sh```<p> 
-    ```
-    2018-08-03 13:31:13,731 - rds_slow_query_log_examiner - INFO - Starting server...
-     * Serving Flask app "app" (lazy loading)
-     * Environment: production
-       WARNING: Do not use the development server in a production environment.
-       Use a production WSGI server instead.
-     * Debug mode: off
-     * Running on http://0.0.0.0:5150/ (Press CTRL+C to quit)
-    ``` 
+   ```./run.sh```<p> 
+   ```
+   Executing docker run command
+
+   2018-08-30 00:06:09,148 - rds_slow_query_log_examiner - INFO - Init Lock Object
+   2018-08-30 00:06:09,164 - rds_slow_query_log_examiner - INFO - Starting HTTPS server...
+    * Serving Flask app "app" (lazy loading)
+    * Environment: production
+      WARNING: Do not use the development server in a production environment.
+      Use a production WSGI server instead.
+    * Debug mode: off
+    * Running on https://0.0.0.0:5151/ (Press CTRL+C to quit)   ``` 
+   ```
 
 * Navigate to ```https://docker:5151/``` 
 
-    0. You may need to login... use AWS credentials which have *TODO* privileges
-    1. Click on the AWS Region to examine  ( e.g. us-east-1 )
-    2. Select from the list of active CloudWatch RDS logs
-    3. After some time ( ~ 1 minute ) the aggregate slow query data will be displayed
-    4. Optionally choose a different start/end time
-        1. There's currently a limit of 20,000 queries  / log entries to aggregate regardless of the window specified
-        2. If the limit is reached, the time window will refect the time window processed rather than requested
+1. You may need to login... use AWS credentials which have **TODO** defined privileges
+2. Click on the AWS Region to examine  ( e.g. us-east-1 )
+3. Select from the list of active CloudWatch RDS logs
+4. After some time ( ~ 1 minute ) the aggregate slow query data will be displayed
+5. Optionally choose a different start/end time
+   1. There's currently a limit of 20,000 queries  / log entries to aggregate regardless of the window specified
+   2. If the limit is reached, the time window will refect the time window processed rather than requested
 
 ## Screenshots
 
@@ -67,7 +70,7 @@ SCREENSHOTS TO FOLLOW
 
 ## DEVELOPMENT
 
-See *CONTRIBUTE.md* for instructions on how to contribute to this project
+[Contribution guidelines for this project](CONTRIBUTE.md)
 
 The instructions below assume you have bash and docker installed on your computer 
 
