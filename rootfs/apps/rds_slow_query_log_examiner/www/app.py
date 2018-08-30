@@ -1,5 +1,5 @@
 from __future__ import unicode_literals
-from multiprocessing import Process, Lock
+from multiprocessing import Lock
 from flask import Flask, request, redirect, abort, render_template, g, session
 import botocore
 import time
@@ -668,23 +668,6 @@ def ts_to_string(s):
     return Markup(s)
 
 
-def start_http():
-    global web_protocol
-    web_protocol = "HTTP"
-
-    app.secret_key = 'does this really matter'
-    app.config['SESSION_TYPE'] = 'filesystem'
-    app.config['SESSION_PERMANENT'] = False
-
-    logger.info('Starting HTTP server...')
-    if "DEBUG" in os.environ:
-        app.run(debug=True, host='0.0.0.0', port=5150)
-    else:
-        app.run(host='0.0.0.0', port=5150)
-    logger.info('HTTP Exiting...')
-    exit(0)
-
-
 def start_https():
     global web_protocol
     web_protocol = "HTTPS"
@@ -705,11 +688,5 @@ def start_https():
 if __name__ == '__main__':
     # This starts the built in flask server, not designed for production use
 
-    logger.info('Setting up two processes for HTTP/HTTPS')
-    p1 = Process(target=start_http)
-    p1.start()
-    p2 = Process(target=start_https)
-    p2.start()
-    p1.join()
-    p2.join()
+    start_https()
     logger.info('Exiting...')
