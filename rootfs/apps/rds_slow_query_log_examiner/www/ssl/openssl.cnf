@@ -1,0 +1,16 @@
+[req]
+distinguished_name = req_name
+req_extenstions = v3_req
+prompt = no
+[req_name]
+C = US
+ST = California
+L = Santa Clara
+O = MyCompany
+OU = MyOrg
+CN = localhost
+[v3_req]
+keyUsage = keyEncipherment, dataEncipherment
+extendedKeyUsage = serverAuth
+[SAN]
+subjectAltName=DNS:localhost,IP:127.0.0.1,DNS:docker,IP:192.168.99.100

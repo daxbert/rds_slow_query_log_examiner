@@ -12,14 +12,19 @@ TODO:  postgres
 
 ## EASY MODE
 
-Just run the pre-built container from Docker Hub:
+1. Add "docker" to your hosts file
+   ```
+   docker 192.168.99.100
+   ```
+2. Run the pre-built container from Docker Hub:
+   ```
+   # docker run -it -p 0.0.0.0:5151:5151 daxchegg/rds_slow_query_log_examiner
+   ```
 
-```
-docker run -it -p 0.0.0.0:5150:5150 \
--e "AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID" \
--e "AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY" \
-daxchegg/rds_slow_query_log_examiner
-```
+3. Navigate to https://docker:5151/
+
+4. Optionally add the "cert" to your trusted certs
+
 
 ## HOW IT WORKS
 
@@ -28,30 +33,31 @@ daxchegg/rds_slow_query_log_examiner
 
 * Build the docker container locally, or run from Docker hub as shown above.
 
-```bash
-./build.sh
-```
+    ```bash
+    ./build.sh
+    ```
 
 * If building locally, start docker container 
-```./run.sh```<p> 
-```
-2018-08-03 13:31:13,731 - rds_slow_query_log_examiner - INFO - Starting server...
- * Serving Flask app "app" (lazy loading)
- * Environment: production
-   WARNING: Do not use the development server in a production environment.
-   Use a production WSGI server instead.
- * Debug mode: off
- * Running on http://0.0.0.0:5150/ (Press CTRL+C to quit)
-``` 
+    ```./run.sh```<p> 
+    ```
+    2018-08-03 13:31:13,731 - rds_slow_query_log_examiner - INFO - Starting server...
+     * Serving Flask app "app" (lazy loading)
+     * Environment: production
+       WARNING: Do not use the development server in a production environment.
+       Use a production WSGI server instead.
+     * Debug mode: off
+     * Running on http://0.0.0.0:5150/ (Press CTRL+C to quit)
+    ``` 
 
-* Navigate to ```http://localhost:5150/``` 
+* Navigate to ```https://docker:5151/``` 
 
-1. Click on the AWS Region to examine  ( e.g. us-east-1 )
-2. Select from the list of active CloudWatch RDS logs
-3. After some time ( ~ 1 minute ) the aggregate slow query data will be displayed
-4. Optionally choose a different start/end time
-    1. There's currently a limit of 20,000 queries  / log entries to aggregate regardless of the window specified
-    2. If the limit is reached, the time window will refect the time window processed rather than requested
+    0. You may need to login... use AWS credentials which have *TODO* privileges
+    1. Click on the AWS Region to examine  ( e.g. us-east-1 )
+    2. Select from the list of active CloudWatch RDS logs
+    3. After some time ( ~ 1 minute ) the aggregate slow query data will be displayed
+    4. Optionally choose a different start/end time
+        1. There's currently a limit of 20,000 queries  / log entries to aggregate regardless of the window specified
+        2. If the limit is reached, the time window will refect the time window processed rather than requested
 
 ## Screenshots
 
@@ -60,6 +66,8 @@ SCREENSHOTS TO FOLLOW
 
 
 ## DEVELOPMENT
+
+See *CONTRIBUTE.md* for instructions on how to contribute to this project
 
 The instructions below assume you have bash and docker installed on your computer 
 
@@ -75,11 +83,6 @@ In dev mode, you can edit the files in the container
 and they will persist when the container is stopped.
 Mounts are used to achieve this persistence.
 
-```bash
-export AWS_DEFAULT_PROFILE={profile_with_your_aws_keys}
-./dev.sh
-```
-
 ## How to run container normally
 
 Unlike dev mode, run mode has no mounts, and therefore
@@ -88,7 +91,6 @@ nothing will survive container stoppage.
 ```
 #!bash
 ./build.sh
-export AWS_DEFAULT_PROFILE={profile_with_your_aws_keys}
 ./run.sh
 ```
 
@@ -147,16 +149,17 @@ MIT License
 This file. duh?
 
 ## The working bits...
+
 ### ```rootfs/apps/rds_slow_query_logs/www/app.py```
 
 This is the main application entry point.  Right now it's a monolith.  This should
 be modularized and made more pythonic.  For now, it's ugly and it works.
 
+### ```rootfs/apps/rds_slow_query_logs/www/ssl/*```
+
+The various files needed to run this app over SSL ( self-signed cert )
+
 ### ```rootfs/apps/rds_slow_query_logs/www/templates/*```
 
 The various flask templates and includes used to render the web app
 
-### ```rootfs/apps/rds_slow_query_logs/www/grabLogsFromCWToFile.py```
-
-For advanced users, lets you dump CW logs to a normal MySQL slow query log.  
-This will eventually be used to run ```pt-query-digest``` for mo' better log processing. 

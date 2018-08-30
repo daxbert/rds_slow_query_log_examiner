@@ -25,7 +25,7 @@ class size( long ):
 if __name__ == "__main__":
     # Example usages
 
-    # You can use normal format spcifiers as expected - just use S as the presentation type (instead of f, i etc)
+    # You can use normal format specifiers as expected - just use S as the presentation type (instead of f, i etc)
     # and cast the integer byte count to type size.
 
     # Example format specifications

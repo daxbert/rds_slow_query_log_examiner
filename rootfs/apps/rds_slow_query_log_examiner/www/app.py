@@ -1,6 +1,6 @@
 from __future__ import unicode_literals
-from multiprocessing import Process, Lock
-from flask import Flask, request, redirect, abort, render_template, g
+from multiprocessing import Lock
+from flask import Flask, request, redirect, abort, render_template, g, session
 import botocore
 import time
 import logging
@@ -39,12 +39,32 @@ cache_lock = Lock()
 web_protocol = ""
 
 
+@app.before_request
+def before_request():
+    if 'AWS_ACCESS_KEY_ID' not in session:
+        if "credentials" not in request.url:
+            if 'AWS_ACCESS_KEY_ID' in os.environ:
+                logger.info("Credentials Needed - Environment set, using it.")
+                session['AWS_ACCESS_KEY_ID'] = os.environ['AWS_ACCESS_KEY_ID']
+                session['AWS_SECRET_ACCESS_KEY'] = os.environ['AWS_SECRET_ACCESS_KEY']
+            else:
+                logger.info("Credentials Needed - No environment, redirect to login")
+                return redirect("/credentials?redirect=" + request.url)
+
+
 def acquire_lock():
     logger.info("Acquiring Lock... {}".format(web_protocol))
     cache_lock.acquire()
     logger.info("Opening Cache")
-    g.logEntriesCache = shelve.open("logEntriesCache.data", writeback=True)
-    g.logStreamsCache = shelve.open("logStreamsCache.data", writeback=True)
+    if 'AWS_ACCESS_KEY_ID' not in session:
+        logger.info("Can't open cache files, no AWS key available")
+        abort(404)
+
+    log_entries_file = "logEntriesCache.{}.data".format(session['AWS_ACCESS_KEY_ID'])
+    log_streams_file = "logStreamsCache.{}.data".format(session['AWS_ACCESS_KEY_ID'])
+
+    g.logEntriesCache = shelve.open(log_entries_file, writeback=True)
+    g.logStreamsCache = shelve.open(log_streams_file, writeback=True)
     logger.info("{}".format(g.logEntriesCache))
     logger.info("{}".format(g.logStreamsCache))
     logger.info("Acquired {}".format(web_protocol))
@@ -58,12 +78,34 @@ def release_lock():
     logger.debug("Released {}".format(web_protocol))
 
 
+@app.route('/credentials', methods=['GET', 'POST'])
+def credentials():
+    if "user_id" in request.form:
+        session["AWS_ACCESS_KEY_ID"] = request.form["user_id"]
+        if "password" in request.form:
+            session["AWS_SECRET_ACCESS_KEY"] = request.form["password"]
+            if "redirect" in request.args:
+                return redirect(request.args["redirect"])
+            if "redirect" in request.form:
+                return redirect(request.form["redirect"])
+    return render_template(
+        'credentials.html'
+    ), 401
+
+
 @app.route('/regions', methods=['GET'])
 def regions():
     """
     Show Region List
     """
-    client = boto3.client('ec2')
+    if 'AWS_ACCESS_KEY_ID' not in session:
+        return redirect("/credentials?redirect=/regions")
+
+    client = boto3.client(
+        'ec2',
+        aws_access_key_id=session['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=session['AWS_SECRET_ACCESS_KEY']
+    )
 
     try:
         response = client.describe_regions()
@@ -72,31 +114,34 @@ def regions():
 
     except botocore.exceptions.NoCredentialsError as e:
         logger.info("botocore.exceptions.NoCredentialsError in regions()")
-        return render_template(
-            'error.html',
-            code=500,
-            name="No AWS Credentials Provided. You need to " +
-                 "set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY " +
-                 "on the docker command line",
-            description=e
-        )
-
+        return redirect("/credentials?redirect=/regions")
     except botocore.exceptions.BotoCoreError as e:
         logger.info("botocore.exceptions.BotoCoreError in regions()")
+        if e.response['Error']['Code'] == 'AuthError':
+            return redirect("/credentials?redirect=/regions")
         return render_template(
             'error.html',
             code=500,
             name="API Error",
             description=e
         )
-
+    except botocore.exceptions.ClientError as e:
+        if e.response['Error']['Code'] == 'AuthFailure':
+            return redirect("/credentials?redirect=/regions")
+        else:
+            return render_template(
+                'error.html',
+                code=500,
+                name="API Error",
+                description="ClientError error: %s" % e
+            )
     except Exception as e:
         logger.info("Python exception in regions()")
         return render_template(
             'error.html',
             code=500,
             name="Python Exception",
-            description=e
+            description="Unexpected error: %s" % e
         )
 
 
@@ -143,7 +188,7 @@ def parse_log_entry(cw_event):
     rows = None
     host = None
     user = None
-    session = None
+    log_session = None
     for line in cw_event['message'].splitlines():
         logger.debug("LINE: {}".format(line))
         user_info = regexUserInfo.match(line)
@@ -151,7 +196,7 @@ def parse_log_entry(cw_event):
             query = ""
             user = user_info.group(1)
             host = user_info.group(2)
-            session = user_info.group(3)
+            log_session = user_info.group(3)
             continue
 
         if bool(re.match('^# Query_time:', line)):
@@ -187,7 +232,7 @@ def parse_log_entry(cw_event):
     return {
         'event': cw_event,
         'qtime': query_time,
-        'session': session,
+        'session': log_session,
         'rows': rows,
         'sent': sent,
         'ltime': lock_time,
@@ -202,6 +247,9 @@ def stream_page(option, arn, region):
     """
     Show details about stream
     """
+#    if 'AWS_ACCESS_KEY_ID' not in session:
+#        return redirect("/credentials?redirect=" + request.url,code=401)
+
     os.environ['AWS_DEFAULT_REGION'] = region
     span_active = 'active'
     ui = {'details': '', 'count': ''}
@@ -289,7 +337,12 @@ def stream_page(option, arn, region):
         if option == "data":
             ui['count'] = span_active
             if 'lastEventTimestamp' in stream:
-                log_entries = get_log_entries(stream['logGroup'], stream['logStreamName'], start_timestamp, end_timestamp)
+                log_entries = get_log_entries(
+                    stream['logGroup'],
+                    stream['logStreamName'],
+                    start_timestamp,
+                    end_timestamp
+                )
                 if 'METRICS' in log_entries:
                     oldest_timestamp = log_entries['METRICS']['FIRST_TS']
                     newest_timestamp = log_entries['METRICS']['LAST_TS']
@@ -334,6 +387,7 @@ def streamlist_page(region):
     """
     Show list of known Clusters
     """
+
     os.environ['AWS_DEFAULT_REGION'] = region
     stream_dict = get_slow_query_streams()
     stream_list = []
@@ -403,11 +457,11 @@ def update_log_entries(log_entries, new_entry):
         if len(existing_entry['queries']) < MAX_QUERIES_TO_APPEND:
             existing_entry['queries'].append(new_entry)
             logger.debug("LEN: {}".format(len(existing_entry['queries'])))
-        existing_entry['totalcount']  += 1
-        existing_entry['totalrows']   += int(new_entry['rows'])
-        existing_entry['totalsent']   += int(new_entry['sent'])
-        existing_entry['totalqtime']  += float(new_entry['qtime'])
-        existing_entry['totalltime']  += float(new_entry['ltime'])
+        existing_entry['totalcount'] += 1
+        existing_entry['totalrows'] += int(new_entry['rows'])
+        existing_entry['totalsent'] += int(new_entry['sent'])
+        existing_entry['totalqtime'] += float(new_entry['qtime'])
+        existing_entry['totalltime'] += float(new_entry['ltime'])
         for metric in ("sent", "rows", "qtime", "ltime"):
             if new_entry[metric] > existing_entry['slowest'][metric][metric]:
                 existing_entry['slowest'][metric] = new_entry
@@ -487,7 +541,11 @@ def get_log_entries(log_group, log_stream_name, start_time, end_time):
 
     log_entries = {}
     budget_left = MAX_QUERIES_TO_PARSE
-    client = boto3.client('logs')
+    client = boto3.client(
+        'logs',
+        aws_access_key_id=session['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=session['AWS_SECRET_ACCESS_KEY']
+    )
 
     response = client.get_log_events(
         logGroupName=log_group,
@@ -549,7 +607,12 @@ def get_log_entries(log_group, log_stream_name, start_time, end_time):
 
 
 def describe_log_streams(log_group_name_value):
-    client = boto3.client('logs')
+    client = boto3.client(
+        'logs',
+        aws_access_key_id=session['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=session['AWS_SECRET_ACCESS_KEY']
+    )
+
     log_streams = {}
 
     response = client.describe_log_streams(logGroupName=log_group_name_value)
@@ -567,7 +630,11 @@ def describe_log_streams(log_group_name_value):
 
 
 def describe_log_groups():
-    client = boto3.client('logs')
+    client = boto3.client(
+        'logs',
+        aws_access_key_id=session['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=session['AWS_SECRET_ACCESS_KEY']
+    )
 
     response = client.describe_log_groups(logGroupNamePrefix='/aws/rds/instance', limit=10)
     log_groups = response['logGroups']
@@ -601,31 +668,19 @@ def ts_to_string(s):
     return Markup(s)
 
 
-def start_http():
-    global lockAcquired
-    global web_protocol
-    lockAcquired = False
-    web_protocol = "HTTP"
-
-    logger.info('Starting HTTP server...')
-    if "DEBUG" in os.environ:
-        app.run(debug=True, host='0.0.0.0', port=5150)
-    else:
-        app.run(host='0.0.0.0', port=5150)
-    logger.info('HTTP Exiting...')
-    exit(0)
-
-
 def start_https():
-    global lockAcquired
     global web_protocol
-    lockAcquired = False
     web_protocol = "HTTPS"
+
+    app.secret_key = 'does this really matter'
+    app.config['SESSION_TYPE'] = 'filesystem'
+    app.config['SESSION_PERMANENT'] = False
+
     logger.info('Starting HTTPS server...')
     if "DEBUG" in os.environ:
-        app.run(ssl_context='adhoc', debug=True, host='0.0.0.0', port=5151)
+        app.run(ssl_context=('ssl/server.pem', 'ssl/key.pem'), debug=True, host='0.0.0.0', port=5151)
     else:
-        app.run(ssl_context='adhoc', host='0.0.0.0', port=5151)
+        app.run(ssl_context=('ssl/server.pem', 'ssl/key.pem'), host='0.0.0.0', port=5151)
     logger.info('HTTPS Exiting...')
     exit(0)
 
@@ -633,11 +688,5 @@ def start_https():
 if __name__ == '__main__':
     # This starts the built in flask server, not designed for production use
 
-    logger.info('Setting up two processes for HTTP/HTTPS')
-    p1 = Process(target=start_http)
-    p1.start()
-    p2 = Process(target=start_https)
-    p2.start()
-    p1.join()
-    p2.join()
+    start_https()
     logger.info('Exiting...')
