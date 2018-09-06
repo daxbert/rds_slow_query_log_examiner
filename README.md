@@ -10,6 +10,10 @@ Right now this only supports MySQL logs.
 
 TODO:  postgres
 
+## DockerHub
+
+https://hub.docker.com/r/daxchegg/rds_slow_query_log_examiner/
+
 ## EASY MODE
 
 1. Add "docker" to your hosts file
