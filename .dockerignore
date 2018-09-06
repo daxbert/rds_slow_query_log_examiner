@@ -1,0 +1,2 @@
+# do not include tests into dockerimage
+rootfs/apps/rds_slow_query_log_examiner/www/tests
