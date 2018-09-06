@@ -1,10 +1,5 @@
 # RDS Slow Query Log
 
-# BUILD STATUS - DockerHub
-
-![build automation](https://img.shields.io/docker/automated/daxchegg/rds_slow_query_log_examiner.svg) ![build_status](https://img.shields.io/docker/build/daxchegg/rds_slow_query_log_examiner.svg)
-
-
 High Level Overview
 ================================
 
@@ -15,11 +10,15 @@ Right now this only supports MySQL logs.
 
 TODO:  postgres
 
+# BUILD STATUS - DockerHub
+
+![build automation](https://img.shields.io/docker/automated/daxchegg/rds_slow_query_log_examiner.svg) ![build_status](https://img.shields.io/docker/build/daxchegg/rds_slow_query_log_examiner.svg)
+
 ## DockerHub
 
 https://hub.docker.com/r/daxchegg/rds_slow_query_log_examiner/
 
-## EASY MODE
+# EASY MODE
 
 1. Add "docker" to your hosts file
    ```
