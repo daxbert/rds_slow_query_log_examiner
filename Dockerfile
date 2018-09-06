@@ -23,4 +23,4 @@ RUN \
 EXPOSE 5151
 
 ADD ./rootfs /
-CMD ["sh", "-c", "cd /apps/rds_slow_query_log_examiner/www; python36 app.py"]
+CMD ["sh", "-c", "cd /apps; export FLASK_APP=rds_slow_query_log_examiner; flask run -h 0.0.0.0 -p 5151 --cert rds_slow_query_log_examiner/ssl/server.pem --key rds_slow_query_log_examiner/ssl/key.pem"]

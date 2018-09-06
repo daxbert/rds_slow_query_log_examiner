@@ -2,8 +2,8 @@ from flask import g
 import datetime
 import time
 import json
-from cw_event import CWEvent
-from sql import SqlQuery
+from rds_slow_query_log_examiner.cw_event import CWEvent
+from rds_slow_query_log_examiner.sql import SqlQuery
 
 '''
 This is a helper class to aggregate

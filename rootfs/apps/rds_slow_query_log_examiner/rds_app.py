@@ -1,4 +1,4 @@
-from flask import Flask, request, redirect, abort, render_template, g, session
+from flask import Blueprint, request, redirect, abort, render_template, g, session
 import botocore
 import time
 import logging
@@ -8,15 +8,14 @@ import urllib
 from markupsafe import Markup
 
 # import our local classes
-from aws_regions import AWSRegions
-from aws_client import AWSClient
-from cache_lock import CacheLock
-from log_entries import LogEntries
+from rds_slow_query_log_examiner.aws_regions import AWSRegions
+from rds_slow_query_log_examiner.aws_client import AWSClient
+from rds_slow_query_log_examiner.cache_lock import CacheLock
+from rds_slow_query_log_examiner.log_entries import LogEntries
 
 aws_regions = None
 
-
-app = Flask(__name__)
+bp = Blueprint('rds_app', __name__, url_prefix='/', template_folder='templates')
 
 logger = logging.getLogger('rds_slow_query_log_examiner')
 logger.setLevel(logging.INFO)
@@ -36,7 +35,7 @@ cache_lock = None
 aws_client = None
 
 
-@app.before_request
+@bp.before_request
 def before_request():
     global cache_lock
     global aws_client
@@ -58,7 +57,7 @@ def before_request():
     g.aws_client = aws_client
 
 
-@app.route('/credentials', methods=['GET', 'POST'])
+@bp.route('/credentials', methods=['GET', 'POST'])
 def credentials():
     if "user_id" in request.form:
         session["AWS_ACCESS_KEY_ID"] = request.form["user_id"]
@@ -73,7 +72,7 @@ def credentials():
     ), 401
 
 
-@app.route('/regions', methods=['GET'])
+@bp.route('/regions', methods=['GET'])
 def regions():
     """
     Show Region List
@@ -124,7 +123,7 @@ def regions():
         )
 
 
-@app.route('/', methods=['GET'])
+@bp.route('/', methods=['GET'])
 def home_page():
     """
     Show homepage
@@ -132,7 +131,7 @@ def home_page():
     return render_template('index.html', redirect="/regions")
 
 
-@app.route('/<region>/stream/<option>/<path:arn>/', methods=['GET'])
+@bp.route('/<region>/stream/<option>/<path:arn>/', methods=['GET'])
 def stream_page(option, arn, region):
     """
     Show details about stream
@@ -282,7 +281,7 @@ def stream_page(option, arn, region):
     abort(404)
 
 
-@app.route('/<region>/streams/', methods=['GET'])
+@bp.route('/<region>/streams/', methods=['GET'])
 def streamlist_page(region):
     """
     Show list of known Clusters
@@ -379,7 +378,7 @@ def describe_log_groups(region):
     return log_groups
 
 
-@app.template_filter('urlencode')
+@bp.app_template_filter('urlencode')
 def urlencode_filter(s):
     if type(s) == 'Markup':
         s = s.unescape()
@@ -388,7 +387,7 @@ def urlencode_filter(s):
     return Markup(s)
 
 
-@app.template_filter('tsconvert')
+@bp.app_template_filter('tsconvert')
 def ts_to_string(s):
     if isinstance(s, int):
         possible_ts = s
