@@ -39,9 +39,7 @@
 <script type="text/javascript">
 var table = {}
 var dataSet = [
-    {% for entryKey, entry in logEntries.items() %}
-    {{ entry | tojson }},
-    {% endfor %}
+    {{ dataset | safe }}
 ]
 
 const numberWithCommas = (x) => {

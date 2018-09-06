@@ -1,23 +1,20 @@
-from __future__ import unicode_literals
-from multiprocessing import Lock
 from flask import Flask, request, redirect, abort, render_template, g, session
 import botocore
 import time
 import logging
 import datetime
 import boto3
-import re
 import os
-import shelve
 import urllib
 from markupsafe import Markup
+
 # import our local classes
-from sql import SqlQuery
+from log_entries import LogEntries
+from aws_regions import AWSRegions
+from cache_lock import CacheLock
 
-os.environ["AWS_DEFAULT_REGION"] = "us-west-2"
+aws_regions = None
 
-MAX_QUERIES_TO_PARSE = 20000
-MAX_QUERIES_TO_APPEND = 10
 
 app = Flask(__name__)
 
@@ -35,7 +32,7 @@ stderr_logs.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname
 logger.addHandler(stderr_logs)
 
 logger.info('Init Lock Object')
-cache_lock = Lock()
+cache_lock = None
 web_protocol = ""
 
 
@@ -50,32 +47,6 @@ def before_request():
             else:
                 logger.info("Credentials Needed - No environment, redirect to login")
                 return redirect("/credentials?redirect=" + request.url)
-
-
-def acquire_lock():
-    logger.info("Acquiring Lock... {}".format(web_protocol))
-    cache_lock.acquire()
-    logger.info("Opening Cache")
-    if 'AWS_ACCESS_KEY_ID' not in session:
-        logger.info("Can't open cache files, no AWS key available")
-        abort(404)
-
-    log_entries_file = "logEntriesCache.{}.data".format(session['AWS_ACCESS_KEY_ID'])
-    log_streams_file = "logStreamsCache.{}.data".format(session['AWS_ACCESS_KEY_ID'])
-
-    g.logEntriesCache = shelve.open(log_entries_file, writeback=True)
-    g.logStreamsCache = shelve.open(log_streams_file, writeback=True)
-    logger.info("{}".format(g.logEntriesCache))
-    logger.info("{}".format(g.logStreamsCache))
-    logger.info("Acquired {}".format(web_protocol))
-
-
-def release_lock():
-    logger.info("Release Lock...{}".format(web_protocol))
-    g.logEntriesCache.close()
-    g.logStreamsCache.close()
-    cache_lock.release()
-    logger.debug("Released {}".format(web_protocol))
 
 
 @app.route('/credentials', methods=['GET', 'POST'])
@@ -98,19 +69,24 @@ def regions():
     """
     Show Region List
     """
-    if 'AWS_ACCESS_KEY_ID' not in session:
-        return redirect("/credentials?redirect=/regions")
 
-    client = boto3.client(
-        'ec2',
-        aws_access_key_id=session['AWS_ACCESS_KEY_ID'],
-        aws_secret_access_key=session['AWS_SECRET_ACCESS_KEY']
-    )
+    if 'ec2_client' not in g:
+        g.ec2_client = boto3.client(
+            'ec2',
+            aws_access_key_id=session['AWS_ACCESS_KEY_ID'],
+            aws_secret_access_key=session['AWS_SECRET_ACCESS_KEY'],
+            region_name='us-west-1'
+        )
+
+    global aws_regions
+    if aws_regions is None:
+        logger.info("aws_regions does not yet exist")
+        aws_regions = AWSRegions(g.ec2_client, logger)
+    else:
+        logger.info("aws_regions exists")
 
     try:
-        response = client.describe_regions()
-
-        return render_template('regions.html', response=response)
+        return render_template('regions.html', regions=aws_regions.get())
 
     except botocore.exceptions.NoCredentialsError as e:
         logger.info("botocore.exceptions.NoCredentialsError in regions()")
@@ -153,95 +129,6 @@ def home_page():
     return render_template('index.html', redirect="/regions")
 
 
-"""
-regex patterns used in the parse_log_entry function
-"""
-
-regexPerformance = re.compile(
-    r"^# Query_time:\s+(\d+\.\d+)\s+Lock_time:\s+(\d+\.\d+)\s+Rows_sent:\s+(\d+)\s+Rows_examined:\s+(\d+)"
-)
-
-regexUserInfo = re.compile(
-    r"^# User@Host:\s+(\S+)\s+@\s+(.*)\s+Id:\s+(\d+)"
-)
-
-regexLinesToIgnore = [
-    re.compile(r"^#"),
-    re.compile(r"^use ", re.I),
-    re.compile(r"^set ", re.I)
-]
-
-
-def skip_line(line):
-    for regex in regexLinesToIgnore:
-        if bool(regex.match(line)):
-            logger.debug("IGNORE: {}".format(line))
-            return True
-    return False
-
-
-def parse_log_entry(cw_event):
-    query = None
-    query_time = None
-    lock_time = None
-    sent = None
-    rows = None
-    host = None
-    user = None
-    log_session = None
-    for line in cw_event['message'].splitlines():
-        logger.debug("LINE: {}".format(line))
-        user_info = regexUserInfo.match(line)
-        if user_info:
-            query = ""
-            user = user_info.group(1)
-            host = user_info.group(2)
-            log_session = user_info.group(3)
-            continue
-
-        if bool(re.match('^# Query_time:', line)):
-            query = ""
-            logger.debug("QT LIKELY: {}".format(line))
-            m = regexPerformance.match(line)
-            if m:
-                query_time = float(m.group(1))
-                lock_time = float(m.group(2))
-                sent = int(m.group(3))
-                rows = int(m.group(4))
-                logger.debug("QT OK: {} {}".format(query_time, rows))
-            else:
-                logger.debug("QT ERROR: {}".format(line))
-            continue
-
-        if skip_line(line):
-            continue
-
-        query = query + line + "\t"
-
-    # done with the entry... do we have a pending query to output
-    if any(x is None for x in [rows, query_time, lock_time, user, host]):
-        logger.info("PARSE_FAILED: {}".format(cw_event))
-        logger.info("PARSE_FAILED: {} {} {} {} {}".format(
-                rows,
-                query_time,
-                lock_time,
-                user,
-                host
-            )
-        )
-    return {
-        'event': cw_event,
-        'qtime': query_time,
-        'session': log_session,
-        'rows': rows,
-        'sent': sent,
-        'ltime': lock_time,
-        'query': query,
-        'raw': cw_event['message'],
-        'timestamp': cw_event['timestamp']
-    }
-
-
 @app.route('/<region>/stream/<option>/<path:arn>/', methods=['GET'])
 def stream_page(option, arn, region):
     """
@@ -250,11 +137,10 @@ def stream_page(option, arn, region):
 #    if 'AWS_ACCESS_KEY_ID' not in session:
 #        return redirect("/credentials?redirect=" + request.url,code=401)
 
-    os.environ['AWS_DEFAULT_REGION'] = region
     span_active = 'active'
     ui = {'details': '', 'count': ''}
     logger.info("arn: {}".format(arn))
-    stream_dict = get_slow_query_streams()
+    stream_dict = get_slow_query_streams(region)
     start_timestamp = 0
     end_timestamp = 0
     start_date_timestamp = 0
@@ -286,7 +172,13 @@ def stream_page(option, arn, region):
         stream = stream_dict[arn]
         if option == "details":
             ui['details'] = span_active
-            return render_template('stream.html', stream=stream, ui=ui, os=os)
+            return render_template(
+                'stream.html',
+                stream=stream,
+                ui=ui,
+                os=os,
+                region=region
+            )
 
         if 'lastEventTimestamp' in stream:
             start_timestamp = stream['lastEventTimestamp'] - (1000 * 60 * 5)
@@ -326,10 +218,10 @@ def stream_page(option, arn, region):
             logger.info("end_timestamp: {}".format(end_timestamp))
 
         if option == "refresh":
-            acquire_lock()
+            cache_lock.acquire_lock()
             g.logStreamsCache.close()
             g.logStreamsCache = None
-            release_lock()
+            cache_lock.release_lock()
             clear_cache_log_entries(stream['logStreamName'])
 
             return redirect("/{}/streams/".format(region), code=302)
@@ -337,15 +229,20 @@ def stream_page(option, arn, region):
         if option == "data":
             ui['count'] = span_active
             if 'lastEventTimestamp' in stream:
-                log_entries = get_log_entries(
+                log_entries = LogEntries.get_log_entries(
+                    g,
+                    region,
+                    session,
+                    logger,
                     stream['logGroup'],
                     stream['logStreamName'],
                     start_timestamp,
-                    end_timestamp
+                    end_timestamp,
+                    cache_lock
                 )
-                if 'METRICS' in log_entries:
-                    oldest_timestamp = log_entries['METRICS']['FIRST_TS']
-                    newest_timestamp = log_entries['METRICS']['LAST_TS']
+                if log_entries.get_count() > 0:
+                    oldest_timestamp = log_entries.get_oldest_ts()
+                    newest_timestamp = log_entries.get_newest_ts()
                     logger.info("oldestTimestamp: {} {}".format(
                         oldest_timestamp,
                         datetime.datetime.fromtimestamp(oldest_timestamp/1000.0)
@@ -360,23 +257,26 @@ def stream_page(option, arn, region):
                         'stream_data.html',
                         stream=stream,
                         ui=ui,
-                        metrics=log_entries['METRICS'],
-                        logEntries=log_entries['QUERIES'],
+                        dataset=log_entries.get_queries_as_json(),
+                        metrics=log_entries.get_metrics(),
                         os=os,
                         start_timestamp=oldest_timestamp,
-                        end_timestamp=newest_timestamp
+                        end_timestamp=newest_timestamp,
+                        region=region
                     )
                 else:
                     logger.info("No data returned for arn: {}, in this time window".format(arn))
-                    return render_template('stream_data.html',
-                                           stream=stream,
-                                           ui=ui,
-                                           metrics={},
-                                           logEntries={},
-                                           os=os,
-                                           start_timestamp=start_timestamp,
-                                           end_timestamp=end_timestamp
-                                           )
+                    return render_template(
+                        'stream_data.html',
+                        stream=stream,
+                        ui=ui,
+                        metrics={},
+                        logEntries={},
+                        os=os,
+                        start_timestamp=start_timestamp,
+                        end_timestamp=end_timestamp,
+                        region=region
+                    )
 
     logger.info("arn: {} NOT FOUND, returning 404".format(arn))
     abort(404)
@@ -388,8 +288,7 @@ def streamlist_page(region):
     Show list of known Clusters
     """
 
-    os.environ['AWS_DEFAULT_REGION'] = region
-    stream_dict = get_slow_query_streams()
+    stream_dict = get_slow_query_streams(region)
     stream_list = []
     for arn in sorted(stream_dict):
         stream_list.append(stream_dict[arn])
@@ -401,24 +300,18 @@ def streamlist_page(region):
     )
 
 
-def oldest_viable_cache_timestamp():
-    # 1 Hour ago...
-    return (time.time() * 1000) - (60 * 60 * 1000)
-
-
-def get_slow_query_streams():
+def get_slow_query_streams(region):
     # Actually hold the lock until we are done with this function...
-    acquire_lock()
+    cache_lock.acquire_lock()
 
-    region = os.environ['AWS_DEFAULT_REGION']
     if region in g.logStreamsCache:
         if 'lastModifiedTime' in g.logStreamsCache[region]:
-            if g.logStreamsCache[region]['lastModifiedTime'] > oldest_viable_cache_timestamp():
+            if g.logStreamsCache[region]['lastModifiedTime'] > LogEntries.oldest_viable_cache_timestamp():
                 temp_ls = g.logStreamsCache[region]['logStreams']
-                release_lock()
+                cache_lock.release_lock()
                 return temp_ls
 
-    log_groups = describe_log_groups()
+    log_groups = describe_log_groups(region)
 
     all_log_streams = {}
     for logGroup in log_groups:
@@ -426,201 +319,49 @@ def get_slow_query_streams():
             continue
         logger.info('Group: {}'.format(logGroup['logGroupName']))
 
-        log_streams = describe_log_streams(logGroup['logGroupName'])
+        log_streams = describe_log_streams(region, logGroup['logGroupName'])
 
         all_log_streams.update(log_streams)
         logger.debug('Streams: {}'.format(log_streams))
 
-    g.logStreamsCache[os.environ['AWS_DEFAULT_REGION']] = {}
-    g.logStreamsCache[os.environ['AWS_DEFAULT_REGION']]['lastModifiedTime'] = time.time() * 1000
-    g.logStreamsCache[os.environ['AWS_DEFAULT_REGION']]['logStreams'] = all_log_streams
+    g.logStreamsCache[region] = {}
+    g.logStreamsCache[region]['lastModifiedTime'] = time.time() * 1000
+    g.logStreamsCache[region]['logStreams'] = all_log_streams
 
-    release_lock()
+    cache_lock.release_lock()
 
     return all_log_streams
 
 
 def clear_cache_log_entries(log_stream_name):
-    acquire_lock()
+    cache_lock.acquire_lock()
     if log_stream_name in g.logEntriesCache:
         del g.logEntriesCache[log_stream_name]
-    release_lock()
+    cache_lock.release_lock()
 
 
-def update_log_entries(log_entries, new_entry):
-    if 'QUERIES' not in log_entries:
-        log_entries['QUERIES'] = {}
-        log_entries['METRICS'] = {}
-
-    if new_entry['hash'] in log_entries['QUERIES']:
-        existing_entry = log_entries['QUERIES'][new_entry['hash']]
-        if len(existing_entry['queries']) < MAX_QUERIES_TO_APPEND:
-            existing_entry['queries'].append(new_entry)
-            logger.debug("LEN: {}".format(len(existing_entry['queries'])))
-        existing_entry['totalcount'] += 1
-        existing_entry['totalrows'] += int(new_entry['rows'])
-        existing_entry['totalsent'] += int(new_entry['sent'])
-        existing_entry['totalqtime'] += float(new_entry['qtime'])
-        existing_entry['totalltime'] += float(new_entry['ltime'])
-        for metric in ("sent", "rows", "qtime", "ltime"):
-            if new_entry[metric] > existing_entry['slowest'][metric][metric]:
-                existing_entry['slowest'][metric] = new_entry
-    else:
-        log_entries['QUERIES'][new_entry['hash']] = {
-            'queries': [new_entry],
-            'slowest': {'sent': new_entry, 'rows': new_entry, 'qtime': new_entry, 'ltime': new_entry},
-            'totalcount': 1,
-            'hash': new_entry['hash'],
-            'totalsent': int(new_entry['sent']),
-            'totalrows': int(new_entry['rows']),
-            'totalqtime': float(new_entry['qtime']),
-            'totalltime': float(new_entry['ltime'])
-        }
-
-    if 'TOTAL_QUERY_COUNT' in log_entries['METRICS']:
-        log_entries['METRICS']['TOTAL_QUERY_COUNT'] += 1
-        log_entries['METRICS']['TOTAL_ROWS'] += int(new_entry['rows'])
-        log_entries['METRICS']['TOTAL_SENT'] += int(new_entry['sent'])
-        log_entries['METRICS']['TOTAL_QTIME'] += float(new_entry['qtime'])
-        log_entries['METRICS']['TOTAL_LTIME'] += float(new_entry['ltime'])
-        ts = new_entry['event']['timestamp']
-        if ts < log_entries['METRICS']['FIRST_TS']:
-            log_entries['METRICS']['FIRST_TS'] = ts
-        if ts > log_entries['METRICS']['LAST_TS']:
-            log_entries['METRICS']['LAST_TS'] = ts
-    else:
-        log_entries['METRICS']['TOTAL_QUERY_COUNT'] = 1
-        log_entries['METRICS']['FIRST_TS'] = new_entry['event']['timestamp']
-        log_entries['METRICS']['LAST_TS'] = new_entry['event']['timestamp']
-        log_entries['METRICS']['TOTAL_ROWS'] = int(new_entry['rows'])
-        log_entries['METRICS']['TOTAL_SENT'] = int(new_entry['sent'])
-        log_entries['METRICS']['TOTAL_QTIME'] = float(new_entry['qtime'])
-        log_entries['METRICS']['TOTAL_LTIME'] = float(new_entry['ltime'])
-
-    return log_entries
-
-
-def process_cloudwatch_response(response, log_entries, log_stream_name):
-    logger.info("Event Count: {}".format(len(response['events'])))
-    if len(response['events']) > 0:
-        first_ts = response['events'][0]['timestamp']
-        last_ts = response['events'][len(response['events']) - 1]['timestamp']
-        if last_ts < first_ts:
-            first_ts, last_ts = last_ts, first_ts
-        logger.info("Stream: {} from {} to {}".format(
-            log_stream_name,
-            datetime.datetime.fromtimestamp(first_ts/1000.0),
-            datetime.datetime.fromtimestamp(last_ts / 1000.0)))
-        for event in response['events']:
-            le = parse_log_entry(event)
-            if le is None:
-                return log_entries
-            temp_query = SqlQuery(le['query'])
-            le['hash'] = temp_query.fingerprint()
-            log_entries = update_log_entries(log_entries, le)
-        return log_entries, len(response['events'])
-    else:
-        return log_entries, 0
-
-
-def get_log_entries(log_group, log_stream_name, start_time, end_time):
-    key = log_stream_name + "_" + str(start_time) + "_" + str(end_time)
-    logger.info("Key: {}".format(key))
-
-    acquire_lock()
-    if key in g.logEntriesCache:
-        if g.logEntriesCache[key]['lastModifiedTime'] > oldest_viable_cache_timestamp():
-            temp_array = (
-                g.logEntriesCache[key]['logEntries'],
-                g.logEntriesCache[key]['oldestTimestamp'],
-                g.logEntriesCache[key]['newestTimestamp']
+def describe_log_streams(region, log_group_name_value):
+    if 'logs_client' not in g:
+        g.logs_client = {}
+        if region not in g.logs_client:
+            g.logs_client.region = boto3.client(
+                'logs',
+                aws_access_key_id=session['AWS_ACCESS_KEY_ID'],
+                aws_secret_access_key=session['AWS_SECRET_ACCESS_KEY'],
+                region_name=region
             )
-            release_lock()
-            return temp_array
-    release_lock()
-
-    log_entries = {}
-    budget_left = MAX_QUERIES_TO_PARSE
-    client = boto3.client(
-        'logs',
-        aws_access_key_id=session['AWS_ACCESS_KEY_ID'],
-        aws_secret_access_key=session['AWS_SECRET_ACCESS_KEY']
-    )
-
-    response = client.get_log_events(
-        logGroupName=log_group,
-        logStreamName=log_stream_name,
-        startTime=start_time,
-        endTime=end_time,
-        startFromHead=False
-    )
-
-    log_entries, count = process_cloudwatch_response(response, log_entries, log_stream_name)
-    budget_left = budget_left - count
-    logger.info("Budget Left: {}".format(budget_left))
-
-    while budget_left > 0 and count > 0:
-        response = client.get_log_events(
-            logGroupName=log_group,
-            logStreamName=log_stream_name,
-            startTime=start_time,
-            endTime=end_time,
-            startFromHead=False,
-            nextToken=response['nextBackwardToken']
-        )
-
-        log_entries, count = process_cloudwatch_response(response, log_entries, log_stream_name)
-        budget_left = budget_left - count
-        logger.info("Budget Left: {}".format(budget_left))
-
-    acquire_lock()
-
-    if 'METRICS' in log_entries:
-        logger.info('TOTAL Queries Parsed: {}'.format(log_entries['METRICS']['TOTAL_QUERY_COUNT']))
-        logger.info('TOTAL Deduped SQL Found: {}'.format(len(log_entries['QUERIES'])))
-        key = log_stream_name + \
-            "_" + \
-            str(log_entries['METRICS']['FIRST_TS']) + \
-            "_" + \
-            str(log_entries['METRICS']['LAST_TS'])
-        logger.info("Key: {}".format(key))
-        g.logEntriesCache[key] = {
-            'logEntries': log_entries,
-            'lastModifiedTime': time.time() * 1000,
-            'oldestTimestamp': log_entries['METRICS']['FIRST_TS'],
-            'newestTimestamp': log_entries['METRICS']['LAST_TS'],
-        }
-    else:
-        #  logEntries has no METRICS.. and therefore no entries
-        #  update cache for startTime, endTime as this will
-        #  be a "negative" cache
-        g.logEntriesCache[key] = {
-            'logEntries': log_entries,
-            'lastModifiedTime': time.time() * 1000,
-            'oldestTimestamp': start_time,
-            'newestTimestamp': end_time,
-            }
-
-    release_lock()
-
-    return log_entries
-
-
-def describe_log_streams(log_group_name_value):
-    client = boto3.client(
-        'logs',
-        aws_access_key_id=session['AWS_ACCESS_KEY_ID'],
-        aws_secret_access_key=session['AWS_SECRET_ACCESS_KEY']
-    )
 
     log_streams = {}
 
-    response = client.describe_log_streams(logGroupName=log_group_name_value)
+    response = g.logs_client[region].describe_log_streams(logGroupName=log_group_name_value)
     for elem in response['logStreams']:
         elem['logGroup'] = log_group_name_value
         log_streams[elem['arn']] = elem
     while 'nextToken' in response:
-        response = client.describe_log_streams(logGroupName=log_group_name_value, nextToken=response['nextToken'])
+        response = g.logs_client[region].describe_log_streams(
+            logGroupName=log_group_name_value,
+            nextToken=response['nextToken']
+        )
 
         for elem in response['logStreams']:
             elem['logGroup'] = log_group_name_value
@@ -629,17 +370,24 @@ def describe_log_streams(log_group_name_value):
     return log_streams
 
 
-def describe_log_groups():
-    client = boto3.client(
-        'logs',
-        aws_access_key_id=session['AWS_ACCESS_KEY_ID'],
-        aws_secret_access_key=session['AWS_SECRET_ACCESS_KEY']
-    )
+def describe_log_groups(region):
+    if 'logs_client' not in g:
+        g.logs_client = {}
+        if region not in g.logs_client:
+            g.logs_client[region] = boto3.client(
+                'logs',
+                aws_access_key_id=session['AWS_ACCESS_KEY_ID'],
+                aws_secret_access_key=session['AWS_SECRET_ACCESS_KEY'],
+                region_name=region
+            )
 
-    response = client.describe_log_groups(logGroupNamePrefix='/aws/rds/instance', limit=10)
+    response = g.logs_client[region].describe_log_groups(logGroupNamePrefix='/aws/rds/instance', limit=10)
     log_groups = response['logGroups']
     while 'nextToken' in response:
-        response = client.describe_log_groups(logGroupNamePrefix='/aws/rds/instance', nextToken=response['nextToken'])
+        response = g.logs_client[region].describe_log_groups(
+            logGroupNamePrefix='/aws/rds/instance',
+            nextToken=response['nextToken']
+        )
 
         log_groups = log_groups + response['logGroups']
     logger.info('LogGroups Found: {}'.format(len(log_groups)))
@@ -671,8 +419,10 @@ def ts_to_string(s):
 def start_https():
     global web_protocol
     web_protocol = "HTTPS"
+    global cache_lock
+    cache_lock = CacheLock(logger, g, session, web_protocol)
 
-    app.secret_key = 'does this really matter'
+    app.secret_key = 'does this really matter?'
     app.config['SESSION_TYPE'] = 'filesystem'
     app.config['SESSION_PERMANENT'] = False
 
@@ -686,7 +436,5 @@ def start_https():
 
 
 if __name__ == '__main__':
-    # This starts the built in flask server, not designed for production use
-
     start_https()
     logger.info('Exiting...')
