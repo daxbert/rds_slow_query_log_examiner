@@ -79,7 +79,7 @@ def regions():
     Show Region List
     """
 
-    client = aws_client.getClient("ec2", "us-west-1")
+    client = aws_client.get_client("ec2", "us-west-1")
 
     global aws_regions
     if aws_regions is None:
@@ -342,7 +342,7 @@ def clear_cache_log_entries(log_stream_name):
 
 
 def describe_log_streams(region, log_group_name_value):
-    client = aws_client.getClient("logs", region)
+    client = aws_client.get_client("logs", region)
 
     log_streams = {}
 
@@ -364,7 +364,7 @@ def describe_log_streams(region, log_group_name_value):
 
 
 def describe_log_groups(region):
-    client = aws_client.getClient("logs", region)
+    client = aws_client.get_client("logs", region)
 
     response = client.describe_log_groups(logGroupNamePrefix='/aws/rds/instance', limit=10)
     log_groups = response['logGroups']
