@@ -54,7 +54,8 @@ CN = localhost
 keyUsage = keyEncipherment, dataEncipherment
 extendedKeyUsage = serverAuth
 [SAN]
-subjectAltName=DNS:localhost,IP:127.0.0.1,DNS:docker,IP:192.168.99.100```
+subjectAltName=DNS:localhost,IP:127.0.0.1,DNS:docker,IP:192.168.99.100
+```
 
 Within the container
 <p>
