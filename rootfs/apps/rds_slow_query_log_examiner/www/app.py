@@ -3,15 +3,15 @@ import botocore
 import time
 import logging
 import datetime
-import boto3
 import os
 import urllib
 from markupsafe import Markup
 
 # import our local classes
-from log_entries import LogEntries
 from aws_regions import AWSRegions
+from aws_client import AWSClient
 from cache_lock import CacheLock
+from log_entries import LogEntries
 
 aws_regions = None
 
@@ -33,11 +33,17 @@ logger.addHandler(stderr_logs)
 
 logger.info('Init Lock Object')
 cache_lock = None
-web_protocol = ""
+aws_client = None
 
 
 @app.before_request
 def before_request():
+    global cache_lock
+    global aws_client
+    g.logger = logger
+    g.web_protocol = "HTTPS"
+    cache_lock = CacheLock()
+
     if 'AWS_ACCESS_KEY_ID' not in session:
         if "credentials" not in request.url:
             if 'AWS_ACCESS_KEY_ID' in os.environ:
@@ -47,6 +53,9 @@ def before_request():
             else:
                 logger.info("Credentials Needed - No environment, redirect to login")
                 return redirect("/credentials?redirect=" + request.url)
+
+    aws_client = AWSClient()
+    g.aws_client = aws_client
 
 
 @app.route('/credentials', methods=['GET', 'POST'])
@@ -70,18 +79,12 @@ def regions():
     Show Region List
     """
 
-    if 'ec2_client' not in g:
-        g.ec2_client = boto3.client(
-            'ec2',
-            aws_access_key_id=session['AWS_ACCESS_KEY_ID'],
-            aws_secret_access_key=session['AWS_SECRET_ACCESS_KEY'],
-            region_name='us-west-1'
-        )
+    client = aws_client.getClient("ec2", "us-west-1")
 
     global aws_regions
     if aws_regions is None:
         logger.info("aws_regions does not yet exist")
-        aws_regions = AWSRegions(g.ec2_client, logger)
+        aws_regions = AWSRegions(client)
     else:
         logger.info("aws_regions exists")
 
@@ -137,6 +140,7 @@ def stream_page(option, arn, region):
 #    if 'AWS_ACCESS_KEY_ID' not in session:
 #        return redirect("/credentials?redirect=" + request.url,code=401)
 
+    g.aws_region = region
     span_active = 'active'
     ui = {'details': '', 'count': ''}
     logger.info("arn: {}".format(arn))
@@ -230,10 +234,6 @@ def stream_page(option, arn, region):
             ui['count'] = span_active
             if 'lastEventTimestamp' in stream:
                 log_entries = LogEntries.get_log_entries(
-                    g,
-                    region,
-                    session,
-                    logger,
                     stream['logGroup'],
                     stream['logStreamName'],
                     start_timestamp,
@@ -288,6 +288,7 @@ def streamlist_page(region):
     Show list of known Clusters
     """
 
+    g.aws_region = region
     stream_dict = get_slow_query_streams(region)
     stream_list = []
     for arn in sorted(stream_dict):
@@ -341,24 +342,16 @@ def clear_cache_log_entries(log_stream_name):
 
 
 def describe_log_streams(region, log_group_name_value):
-    if 'logs_client' not in g:
-        g.logs_client = {}
-        if region not in g.logs_client:
-            g.logs_client.region = boto3.client(
-                'logs',
-                aws_access_key_id=session['AWS_ACCESS_KEY_ID'],
-                aws_secret_access_key=session['AWS_SECRET_ACCESS_KEY'],
-                region_name=region
-            )
+    client = aws_client.getClient("logs", region)
 
     log_streams = {}
 
-    response = g.logs_client[region].describe_log_streams(logGroupName=log_group_name_value)
+    response = client.describe_log_streams(logGroupName=log_group_name_value)
     for elem in response['logStreams']:
         elem['logGroup'] = log_group_name_value
         log_streams[elem['arn']] = elem
     while 'nextToken' in response:
-        response = g.logs_client[region].describe_log_streams(
+        response = client.describe_log_streams(
             logGroupName=log_group_name_value,
             nextToken=response['nextToken']
         )
@@ -371,20 +364,12 @@ def describe_log_streams(region, log_group_name_value):
 
 
 def describe_log_groups(region):
-    if 'logs_client' not in g:
-        g.logs_client = {}
-        if region not in g.logs_client:
-            g.logs_client[region] = boto3.client(
-                'logs',
-                aws_access_key_id=session['AWS_ACCESS_KEY_ID'],
-                aws_secret_access_key=session['AWS_SECRET_ACCESS_KEY'],
-                region_name=region
-            )
+    client = aws_client.getClient("logs", region)
 
-    response = g.logs_client[region].describe_log_groups(logGroupNamePrefix='/aws/rds/instance', limit=10)
+    response = client.describe_log_groups(logGroupNamePrefix='/aws/rds/instance', limit=10)
     log_groups = response['logGroups']
     while 'nextToken' in response:
-        response = g.logs_client[region].describe_log_groups(
+        response = client.describe_log_groups(
             logGroupNamePrefix='/aws/rds/instance',
             nextToken=response['nextToken']
         )
@@ -417,11 +402,6 @@ def ts_to_string(s):
 
 
 def start_https():
-    global web_protocol
-    web_protocol = "HTTPS"
-    global cache_lock
-    cache_lock = CacheLock(logger, g, session, web_protocol)
-
     app.secret_key = 'does this really matter?'
     app.config['SESSION_TYPE'] = 'filesystem'
     app.config['SESSION_PERMANENT'] = False

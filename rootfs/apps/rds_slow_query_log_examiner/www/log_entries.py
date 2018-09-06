@@ -1,7 +1,7 @@
+from flask import g
 import datetime
 import time
 import json
-import boto3
 from cw_event import CWEvent
 from sql import SqlQuery
 
@@ -17,12 +17,11 @@ MAX_QUERIES_TO_APPEND = 10
 
 class LogEntries:
 
-    def __init__(self, log_stream_name, logger):
+    def __init__(self, log_stream_name):
         self._log_entries = {'QUERIES': {}, 'METRICS': {}}
         self._count = 0
         self._log_stream_name = log_stream_name
         self._max_queries_to_append = MAX_QUERIES_TO_APPEND
-        self.logger = logger
 
     def set_max_queries_to_append(self, max_append):
         self._max_queries_to_append = max_append
@@ -38,7 +37,7 @@ class LogEntries:
             existing_entry = self._log_entries['QUERIES'][new_entry['hash']]
             if len(existing_entry['queries']) < MAX_QUERIES_TO_APPEND:
                 existing_entry['queries'].append(new_entry)
-                self.logger.debug("LEN: {}".format(len(existing_entry['queries'])))
+                g.logger.debug("LEN: {}".format(len(existing_entry['queries'])))
             existing_entry['totalcount'] += 1
             existing_entry['totalrows'] += int(new_entry['rows'])
             existing_entry['totalsent'] += int(new_entry['sent'])
@@ -94,7 +93,7 @@ class LogEntries:
               str(self._log_entries['METRICS']['FIRST_TS']) + \
               "_" + \
               str(self._log_entries['METRICS']['LAST_TS'])
-        self.logger.info("Key: {}".format(key))
+        g.logger.info("Key: {}".format(key))
         cache[key] = {
             'logEntries': self._log_entries,
             'lastModifiedTime': time.time() * 1000,
@@ -118,18 +117,18 @@ class LogEntries:
         return self._log_entries['METRICS']['LAST_TS']
 
     def process_response(self, response):
-        self.logger.info("Event Count: {}".format(len(response['events'])))
+        g.logger.info("Event Count: {}".format(len(response['events'])))
         if len(response['events']) > 0:
             first_ts = response['events'][0]['timestamp']
             last_ts = response['events'][len(response['events']) - 1]['timestamp']
             if last_ts < first_ts:
                 first_ts, last_ts = last_ts, first_ts
-            self.logger.info("Stream: {} from {} to {}".format(
+            g.logger.info("Stream: {} from {} to {}".format(
                 self._log_stream_name,
                 datetime.datetime.fromtimestamp(first_ts/1000.0),
                 datetime.datetime.fromtimestamp(last_ts / 1000.0)))
             for event in response['events']:
-                le = (CWEvent(event, self.logger)).parse()
+                le = (CWEvent(event)).parse()
                 if le is None:
                     return 0
                 le['hash'] = (SqlQuery(le['query'])).fingerprint()
@@ -143,9 +142,9 @@ class LogEntries:
         return output
 
     @staticmethod
-    def get_log_entries(g, region, session, logger, log_group, log_stream_name, start_time, end_time, lock):
+    def get_log_entries(log_group, log_stream_name, start_time, end_time, lock):
         key = log_stream_name + "_" + str(start_time) + "_" + str(end_time)
-        logger.info("Key: {}".format(key))
+        g.logger.info("Key: {}".format(key))
 
         lock.acquire_lock()
         if key in g.logEntriesCache:
@@ -159,14 +158,9 @@ class LogEntries:
                 return temp_array
         lock.release_lock()
 
-        log_entries = LogEntries(log_stream_name, logger )
+        log_entries = LogEntries(log_stream_name)
         budget_left = MAX_QUERIES_TO_PARSE
-        client = boto3.client(
-            'logs',
-            aws_access_key_id=session['AWS_ACCESS_KEY_ID'],
-            aws_secret_access_key=session['AWS_SECRET_ACCESS_KEY'],
-            region_name=region
-        )
+        client = g.aws_client.get_client("logs", g.aws_region)
 
         response = client.get_log_events(
             logGroupName=log_group,
@@ -178,7 +172,7 @@ class LogEntries:
 
         count = log_entries.process_response(response)
         budget_left = budget_left - count
-        logger.info("Budget Left: {}".format(budget_left))
+        g.logger.info("Budget Left: {}".format(budget_left))
 
         while budget_left > 0 and count > 0:
             response = client.get_log_events(
@@ -192,10 +186,10 @@ class LogEntries:
 
             count = log_entries.process_response(response)
             budget_left = budget_left - count
-            logger.info("Budget Left: {}".format(budget_left))
+            g.logger.info("Budget Left: {}".format(budget_left))
 
         if log_entries.get_count() > 0:
-            log_entries.report_metrics(logger)
+            log_entries.report_metrics(g.logger)
 
             lock.acquire_lock()
             log_entries.update_cache(g.logEntriesCache)

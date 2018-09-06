@@ -5,9 +5,8 @@ AWS' regions
 
 
 class AWSRegions:
-    def __init__(self, client, logger):
+    def __init__(self, client):
         self._client = client
-        self.logger = logger
         self._regions = {}
 
     def get(self):
@@ -18,5 +17,3 @@ class AWSRegions:
         self._regions = response['Regions']
 
         return self._regions
-
-
