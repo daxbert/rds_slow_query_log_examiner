@@ -2,9 +2,7 @@
 
 # BUILD STATUS - DockerHub
 
-![build automation](https://img.shields.io/docker/automated/daxchegg/rds_slow_query_log_examiner.svg)
-
-![build_status](https://img.shields.io/docker/build/daxchegg/rds_slow_query_log_examiner.svg)
+![build automation](https://img.shields.io/docker/automated/daxchegg/rds_slow_query_log_examiner.svg) ![build_status](https://img.shields.io/docker/build/daxchegg/rds_slow_query_log_examiner.svg)
 
 
 High Level Overview
