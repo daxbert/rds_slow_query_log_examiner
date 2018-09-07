@@ -1,4 +1,5 @@
 # do not include tests into dockerimage
 rootfs/apps/rds_slow_query_log_examiner/tests
-rootfs/apps/rds_slow_query_log_examiner/__pycache__
+*/__pycache__*
+*/.pytest_cache*
 rootfs/apps/rds_slow_query_log_examiner/*Cache*
