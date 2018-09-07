@@ -30,18 +30,3 @@ def create_app(test_config=None):
     app.register_blueprint(rds_app.bp)
 
     return app
-
-
-# def start_https():
-#     rds_app.secret_key = 'does this really matter?'
-#     rds_app.config['SESSION_TYPE'] = 'filesystem'
-#     rds_app.config['SESSION_PERMANENT'] = False
-#
-#     logger.info('Starting HTTPS server...')
-#     if "DEBUG" in os.environ:
-#         rds_app.run(ssl_context=('ssl/server.pem', 'ssl/key.pem'), debug=True, host='0.0.0.0', port=5151)
-#     else:
-#         rds_app.run(ssl_context=('ssl/server.pem', 'ssl/key.pem'), host='0.0.0.0', port=5151)
-#     logger.info('HTTPS Exiting...')
-#     exit(0)
-
