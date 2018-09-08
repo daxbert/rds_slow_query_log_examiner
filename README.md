@@ -161,16 +161,18 @@ This file. duh?
 
 ## The working bits...
 
-### ```rootfs/apps/rds_slow_query_logs/www/app.py```
+### ```rootfs/apps/rds_slow_query_log_examiner/__init__.py```
 
-This is the main application entry point.  Right now it's a monolith.  This should
-be modularized and made more pythonic.  For now, it's ugly and it works.
+This is the main application entry point for this flask application
 
-### ```rootfs/apps/rds_slow_query_logs/www/ssl/*```
+### ```rootfs/apps/rds_slow_query_log_examiner/ssl/*```
 
 The various files needed to run this app over SSL ( self-signed cert )
 
-### ```rootfs/apps/rds_slow_query_logs/www/templates/*```
+### ```rootfs/apps/rds_slow_query_log_examiner/templates/*```
 
 The various flask templates and includes used to render the web app
 
+### ```rootfs/apps/rds_slow_query_log_examiner/tests/*```
+
+The various pytest based tests. This is currently a work in progress
