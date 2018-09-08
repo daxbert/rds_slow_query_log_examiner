@@ -13,7 +13,6 @@ class AWSRegions:
         if self._regions:
             return self._regions
 
-        response = self._client.describe_regions()
-        self._regions = response['Regions']
+        self._regions = self._client.api("list", "describe_regions", {}, lambda x: x['Regions'])
 
         return self._regions

@@ -9,7 +9,7 @@ from markupsafe import Markup
 
 # import our local classes
 from rds_slow_query_log_examiner.aws_regions import AWSRegions
-from rds_slow_query_log_examiner.aws_client import AWSClient
+from rds_slow_query_log_examiner.aws_client import AWSClientFactory
 from rds_slow_query_log_examiner.cache_lock import CacheLock
 from rds_slow_query_log_examiner.log_entries import LogEntries
 
@@ -32,13 +32,13 @@ logger.addHandler(stderr_logs)
 
 logger.info('Init Lock Object')
 cache_lock = None
-aws_client = None
+aws_clients = None
 
 
 @bp.before_request
 def before_request():
     global cache_lock
-    global aws_client
+    global aws_clients
     g.logger = logger
     g.web_protocol = "HTTPS"
     cache_lock = CacheLock()
@@ -53,8 +53,8 @@ def before_request():
                 logger.info("Credentials Needed - No environment, redirect to login")
                 return redirect("/credentials?redirect=" + request.url)
 
-    aws_client = AWSClient()
-    g.aws_client = aws_client
+    aws_clients = AWSClientFactory()
+    g.aws_clients = aws_clients
 
 
 @bp.route('/credentials', methods=['GET', 'POST'])
@@ -78,12 +78,10 @@ def regions():
     Show Region List
     """
 
-    client = aws_client.get_client("ec2", "us-west-1")
-
     global aws_regions
     if aws_regions is None:
         logger.info("aws_regions does not yet exist")
-        aws_regions = AWSRegions(client)
+        aws_regions = AWSRegions(aws_clients.get_client("ec2", "us-west-1"))
     else:
         logger.info("aws_regions exists")
 
@@ -340,40 +338,39 @@ def clear_cache_log_entries(log_stream_name):
     cache_lock.release_lock()
 
 
-def describe_log_streams(region, log_group_name_value):
-    client = aws_client.get_client("logs", region)
+def lambda_describe_log_streams(d, streams, log_group_name_value):
+    for elem in streams['logStreams']:
+        elem['logGroup'] = log_group_name_value
+        d[elem['arn']] = elem
+    return d
 
+
+def describe_log_streams(region, log_group_name_value):
     log_streams = {}
 
-    response = client.describe_log_streams(logGroupName=log_group_name_value)
-    for elem in response['logStreams']:
-        elem['logGroup'] = log_group_name_value
-        log_streams[elem['arn']] = elem
-    while 'nextToken' in response:
-        response = client.describe_log_streams(
-            logGroupName=log_group_name_value,
-            nextToken=response['nextToken']
-        )
+    log_streams = aws_clients.get_client("logs", region).api(
+        "dict",
+        "describe_log_streams",
+        {
+            'logGroupName': log_group_name_value
+        },
+        lambda x: lambda_describe_log_streams(log_streams, x, log_group_name_value)
+    )
 
-        for elem in response['logStreams']:
-            elem['logGroup'] = log_group_name_value
-            log_streams[elem['arn']] = elem
     logger.info('LogStreams Found: {}'.format(len(log_streams)))
     return log_streams
 
 
 def describe_log_groups(region):
-    client = aws_client.get_client("logs", region)
-
-    response = client.describe_log_groups(logGroupNamePrefix='/aws/rds/instance', limit=10)
-    log_groups = response['logGroups']
-    while 'nextToken' in response:
-        response = client.describe_log_groups(
-            logGroupNamePrefix='/aws/rds/instance',
-            nextToken=response['nextToken']
-        )
-
-        log_groups = log_groups + response['logGroups']
+    log_groups = aws_clients.get_client("logs", region).api(
+        "list",
+        "describe_log_groups",
+        {
+            'logGroupNamePrefix': '/aws/rds/instance',
+            'limit': 2
+        },
+        lambda x: x['logGroups']
+    )
     logger.info('LogGroups Found: {}'.format(len(log_groups)))
     return log_groups
 
@@ -398,22 +395,3 @@ def ts_to_string(s):
                 possible_ts
             )
     return Markup(s)
-
-
-def start_https():
-    app.secret_key = 'does this really matter?'
-    app.config['SESSION_TYPE'] = 'filesystem'
-    app.config['SESSION_PERMANENT'] = False
-
-    logger.info('Starting HTTPS server...')
-    if "DEBUG" in os.environ:
-        app.run(ssl_context=('ssl/server.pem', 'ssl/key.pem'), debug=True, host='0.0.0.0', port=5151)
-    else:
-        app.run(ssl_context=('ssl/server.pem', 'ssl/key.pem'), host='0.0.0.0', port=5151)
-    logger.info('HTTPS Exiting...')
-    exit(0)
-
-
-if __name__ == '__main__':
-    start_https()
-    logger.info('Exiting...')

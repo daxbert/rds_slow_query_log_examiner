@@ -160,14 +160,19 @@ class LogEntries:
 
         log_entries = LogEntries(log_stream_name)
         budget_left = MAX_QUERIES_TO_PARSE
-        client = g.aws_client.get_client("logs", g.aws_region)
+        client = g.aws_clients.get_client("logs", g.aws_region)
 
-        response = client.get_log_events(
-            logGroupName=log_group,
-            logStreamName=log_stream_name,
-            startTime=start_time,
-            endTime=end_time,
-            startFromHead=False
+        response = client.api(
+            "dict",
+            "get_log_events",
+            {
+                'logGroupName': log_group,
+                'logStreamName': log_stream_name,
+                'startTime': start_time,
+                'endTime': end_time,
+                'startFromHead': False
+            },
+            lambda x: x
         )
 
         count = log_entries.process_response(response)
@@ -175,15 +180,19 @@ class LogEntries:
         g.logger.info("Budget Left: {}".format(budget_left))
 
         while budget_left > 0 and count > 0:
-            response = client.get_log_events(
-                logGroupName=log_group,
-                logStreamName=log_stream_name,
-                startTime=start_time,
-                endTime=end_time,
-                startFromHead=False,
-                nextToken=response['nextBackwardToken']
+            response = client.api(
+                "dict",
+                "get_log_events",
+                {
+                    'logGroupName': log_group,
+                    'logStreamName': log_stream_name,
+                    'startTime': start_time,
+                    'endTime': end_time,
+                    'startFromHead': False,
+                    'nextToken': response['nextBackwardToken']
+                },
+                lambda x: x
             )
-
             count = log_entries.process_response(response)
             budget_left = budget_left - count
             g.logger.info("Budget Left: {}".format(budget_left))
