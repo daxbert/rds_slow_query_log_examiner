@@ -5,6 +5,7 @@ import logging
 import datetime
 import os
 import urllib
+import urllib.parse
 from markupsafe import Markup
 
 # import our local classes
@@ -43,15 +44,10 @@ def before_request():
     g.web_protocol = "HTTPS"
     cache_lock = CacheLock()
 
-    if 'AWS_ACCESS_KEY_ID' not in session:
-        if "credentials" not in request.url:
-            if 'AWS_ACCESS_KEY_ID' in os.environ:
-                logger.info("Credentials Needed - Environment set, using it.")
-                session['AWS_ACCESS_KEY_ID'] = os.environ['AWS_ACCESS_KEY_ID']
-                session['AWS_SECRET_ACCESS_KEY'] = os.environ['AWS_SECRET_ACCESS_KEY']
-            else:
-                logger.info("Credentials Needed - No environment, redirect to login")
-                return redirect("/credentials?redirect=" + request.url)
+    if "credentials" not in request.url and "logout" not in request.url:
+        if 'AWS_ACCESS_KEY_ID' not in session:
+            logger.info("Credentials Needed - redirect to login")
+            return redirect("/credentials?redirect=" + request.url)
 
     aws_clients = AWSClientFactory()
     g.aws_clients = aws_clients
@@ -59,17 +55,49 @@ def before_request():
 
 @bp.route('/credentials', methods=['GET', 'POST'])
 def credentials():
-    if "user_id" in request.form:
+    redir = "/"
+    message = ''
+
+    if "redirect" in request.args:
+        redir = request.args["redirect"]
+    elif "redirect" in request.form:
+        redir= request.form["redirect"]
+
+    if "message" in request.args:
+        message = request.args["message"]
+    elif "message" in request.form:
+        message = request.form["message"]
+
+    if "user_id" in request.form and "password" in request.form:
         session["AWS_ACCESS_KEY_ID"] = request.form["user_id"]
-        if "password" in request.form:
-            session["AWS_SECRET_ACCESS_KEY"] = request.form["password"]
-            if "redirect" in request.args:
-                return redirect(request.args["redirect"])
-            if "redirect" in request.form:
-                return redirect(request.form["redirect"])
+        session["AWS_SECRET_ACCESS_KEY"] = request.form["password"]
+        return redirect(redir)
+
+    logger.info("message = '{}'".format(message))
     return render_template(
-        'credentials.html'
-    ), 401
+        'credentials.html',
+        code=401,
+        redirect=redir,
+        message=message
+    )
+
+
+@bp.route('/logout', methods=['GET'])
+def logout():
+    logger.info("Logging user out...")
+    if 'AWS_ACCESS_KEY_ID' in session:
+        del session["AWS_ACCESS_KEY_ID"]
+    if 'AWS_SECRET_ACCESS_KEY' in session:
+        del session["AWS_SECRET_ACCESS_KEY"]
+
+    cache_lock.delete_caches()
+
+    global aws_regions
+    aws_regions = None
+
+    return render_template(
+        'logout.html'
+    )
 
 
 @bp.route('/regions', methods=['GET'])
@@ -86,24 +114,28 @@ def regions():
         logger.info("aws_regions exists")
 
     try:
+        logger.info("Attempt region render")
         return render_template('regions.html', regions=aws_regions.get())
 
     except botocore.exceptions.NoCredentialsError as e:
         logger.info("botocore.exceptions.NoCredentialsError in regions()")
-        return redirect("/credentials?redirect=/regions")
+        message = urllib.parse.quote_plus('<h3><font color="red">AWS Credentials Needed</font></h3>')
+        return redirect("/credentials?redirect=/regions&message=" + message)
     except botocore.exceptions.BotoCoreError as e:
         logger.info("botocore.exceptions.BotoCoreError in regions()")
-        if e.response['Error']['Code'] == 'AuthError':
-            return redirect("/credentials?redirect=/regions")
         return render_template(
             'error.html',
             code=500,
-            name="API Error",
+            name="BotoCoreError API Error",
             description=e
         )
     except botocore.exceptions.ClientError as e:
+        logger.info("botocore.exceptions.ClientError in regions()")
         if e.response['Error']['Code'] == 'AuthFailure':
-            return redirect("/credentials?redirect=/regions")
+            logger.info("Auth Failure in regions()")
+            logout()
+            message = urllib.parse.quote_plus('<h3><font color="red">Invalid AWS Credentials Provided</font></h3>')
+            return redirect("/credentials?redirect=/regions&message=" + message)
         else:
             return render_template(
                 'error.html',
@@ -219,11 +251,7 @@ def stream_page(option, arn, region):
             logger.info("end_timestamp: {}".format(end_timestamp))
 
         if option == "refresh":
-            cache_lock.acquire_lock()
-            g.logStreamsCache.close()
-            g.logStreamsCache = None
-            cache_lock.release_lock()
-            clear_cache_log_entries(stream['logStreamName'])
+            cache_lock.delete_caches()
 
             return redirect("/{}/streams/".format(region), code=302)
 
